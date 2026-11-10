@@ -12,6 +12,7 @@ use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\Dashboard;
 use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Settings;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Ui;
 
 Session::checkLoginUser();
@@ -71,7 +72,7 @@ $numeric = function (array $data, string $key) {
         default  => isset($data['ids'][$key]) ? count($data['ids'][$key]) : null,
     };
 };
-$good = ['total' => null, 'open' => null, 'done' => 'up', 'overdue' => 'down', 'attention' => 'down', 'approval' => null, 'unassigned' => 'down', 'slo' => 'down', 'avg' => 'down', 'ontime' => 'up'];
+$good = ['total' => null, 'open' => null, 'done' => 'up', 'overdue' => 'down', 'attention' => 'down', 'approval' => null, 'unassigned' => 'down', 'slo' => 'down', 'avg' => 'down', 'ontime' => 'up', 'external' => null, 'internal' => null, 'project' => null];
 $deltaHtml = function (string $key) use ($pd, $hasPrev, $d, $numeric, $good, $e): string {
     if (!$hasPrev) {
         return '';
@@ -92,7 +93,7 @@ $deltaHtml = function (string $key) use ($pd, $hasPrev, $d, $numeric, $good, $e)
 // ---------------------------------------------------------------- dados dos gráficos (JSON para o ECharts) e gavetas
 $data = [
     'total' => count($rows), 'status' => [], 'weeks' => ['labels' => [], 'entries' => [], 'done' => []], 'gauges' => [], 'aging' => [], 'types' => [], 'priority' => [],
-    'stages' => [], 'load' => ['names' => [], 'drawers' => [], 'open' => [], 'overdue' => [], 'done' => []],
+    'origins' => [], 'pillars' => [], 'projects' => [], 'stages' => [], 'load' => ['names' => [], 'drawers' => [], 'open' => [], 'overdue' => [], 'done' => []],
 ];
 
 $legend = '';
@@ -162,6 +163,29 @@ foreach ($ch['priority'] as $p => [$color, $ids]) {
     $tpl('pr-' . $p, 'Prioridade ' . mb_strtolower($label), 'ti-flag-3', $color, $ids, 'Demandas em aberto com prioridade ' . mb_strtolower($label) . '.');
     $data['priority'][] = ['name' => $label, 'value' => count($ids), 'color' => $color, 'drawer' => 'pr-' . $p];
 }
+foreach ([Demand::ORIGIN_EXTERNAL => 'external', Demand::ORIGIN_INTERNAL => 'internal'] as $origin => $key) {
+    $ids = $d['ids'][$key];
+    $tpl('or-' . $key, Demand::ORIGINS[$origin], 'ti-inbox', Demand::ORIGIN_COLORS[$origin], $ids, 'Demandas com origem "' . Demand::ORIGINS[$origin] . '".');
+    $data['origins'][] = ['name' => Demand::ORIGINS[$origin], 'value' => count($ids), 'color' => Demand::ORIGIN_COLORS[$origin], 'drawer' => 'or-' . $key];
+}
+$pillarsAll = Structure::pillars();
+$projectsAll = Structure::projects();
+$byPillar = $d['by_pillar'];
+uasort($byPillar, fn ($a, $b) => count($b) <=> count($a));
+foreach ($byPillar as $pid => $ids) {
+    $name = $pid > 0 ? ($pillarsAll[$pid]['name'] ?? 'Pilar removido') : 'Sem pilar';
+    $color = $pid > 0 ? ($pillarsAll[$pid]['color'] ?? '#94a3b8') : '#94a3b8';
+    $tpl('pl-' . $pid, $name, 'ti-columns-3', $color, $ids, 'Demandas e atividades do pilar "' . $name . '".');
+    $data['pillars'][] = ['name' => $name, 'value' => count($ids), 'color' => $color, 'drawer' => 'pl-' . $pid];
+}
+$byProject = $d['by_project'];
+uasort($byProject, fn ($a, $b) => count($b) <=> count($a));
+foreach (array_slice($byProject, 0, 10, true) as $pid => $ids) {
+    $name = $projectsAll[$pid]['name'] ?? 'Projeto removido';
+    $pr = Structure::progress(array_intersect_key($rows, array_flip($ids)));
+    $tpl('pj-' . $pid, $name, 'ti-hierarchy-2', '#14b8a6', $ids, 'Atividades do projeto "' . $name . '" (progresso ' . ($pr === null ? '—' : $pr . '%') . ').');
+    $data['projects'][] = ['name' => $name, 'value' => count($ids), 'color' => '#14b8a6', 'drawer' => 'pj-' . $pid, 'n' => count($ids)];
+}
 $loadRows = $ch['assignees'];
 uasort($loadRows, fn ($a, $b) => (count($b['open'] ?? []) + count($b['overdue'] ?? [])) <=> (count($a['open'] ?? []) + count($a['overdue'] ?? [])));
 foreach (array_slice($loadRows, 0, 12, true) as $uid => $a) {
@@ -197,6 +221,9 @@ echo "<div><label for='f-to'>Até</label><input id='f-to' class='form-control' t
 echo "<div><label>Tipo</label>" . Ui::select('type', $typeOptions, $f['types_id'] ?: '', '', true) . "</div>";
 echo "<div><label>Responsável</label>" . Ui::select('assignee', Ui::userOptions(), $f['assignee'] ?: '', '', true) . "</div>";
 echo "<div><label>Situação</label>" . Ui::select('status', Demand::STATUSES, $f['status'], '', true) . "</div>";
+echo "<div><label>Origem</label>" . Ui::select('origin', Demand::ORIGINS, $f['origin'], '', true) . "</div>";
+echo "<div><label>Pilar</label>" . Ui::select('pillar', Structure::pillarOptions(false), $f['pillar'] ?: '', '', true) . "</div>";
+echo "<div><label>Projeto</label>" . Ui::select('project', Structure::projectOptions(false), $f['project'] ?: '', '', true) . "</div>";
 echo "<div><label>Área</label><input class='form-control' name='area' value='" . $e($f['area']) . "' placeholder='Todas'></div>";
 echo "<div class='mkt-filter-actions'><button class='btn btn-primary'><i class='ti ti-filter me-1'></i>Filtrar</button> <a class='btn btn-outline-secondary' href='" . $e(Ui::url('/front/dashboard.php')) . "'>Limpar</a></div>";
 echo "</div><div class='mkt-quick mt-2'>";
@@ -255,6 +282,9 @@ foreach ($data['gauges'] as $g) {
     $score .= "<li class='mkt-seg' data-drawer='" . $e($g['drawer']) . "' tabindex='0' role='button'><i style='background:" . $e($g['color']) . "'></i><div><div class='mkt-score-n'>" . $e($g['name']) . "</div><div class='mkt-score-d text-secondary'>" . $e($g['note']) . "</div></div><b>" . ($g['value'] === null ? '—' : (int) $g['value'] . '%') . "</b></li>";
 }
 echo $card('Placar de desempenho', "<div class='mkt-split mkt-score'><div class='mkt-plot' data-mkt-chart='score'></div><ul class='mkt-scorelist'>$score</ul></div>", '', 'Entregas, SLOs e conclusão');
+echo $card('Origem do trabalho', "<div class='mkt-plot' data-mkt-chart='origins'></div>", '', 'Solicitações de outras áreas × atividades do Marketing');
+echo $card('Demandas por pilar', "<div class='mkt-plot' data-mkt-chart='pillars'></div>", '', 'Participação de cada frente');
+echo $card('Projetos com mais atividades', "<div class='mkt-plot' data-mkt-chart='projects'></div>", '', 'Os 10 maiores no período');
 echo $card('Demandas por tipo', "<div class='mkt-plot' data-mkt-chart='types'></div>", '', 'Participação no total');
 echo $card('Prioridade das abertas', "<div class='mkt-plot' data-mkt-chart='priority'></div>", '', 'Demandas em aberto por prioridade');
 echo $card('Carga por responsável', "<div class='mkt-plot' style='height:{$loadHeight}px' data-mkt-chart='load'></div>", 'span-load', 'Em aberto, atrasadas e concluídas');

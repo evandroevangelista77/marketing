@@ -165,6 +165,9 @@
             };
         },
         types() { return hbar(D.types, '', true, 'types'); },
+        origins() { return hbar(D.origins || [], '', true, 'origins'); },
+        pillars() { return hbar(D.pillars || [], '', true, 'pillars'); },
+        projects() { return hbar(D.projects || [], '', false, 'projects'); },
         priority() { return hbar(D.priority, '', true, 'priority'); },
         load() {
             const L = D.load;

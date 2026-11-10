@@ -60,6 +60,16 @@ Ler, Criar, Atualizar, Excluir permanentemente, **Aprovar** (decide aprovações
 | RF-026, RF-027 portfólio e calendário editorial | Pendente |
 | RF-028 a RF-034 integrações | Pendente (Fase 3) |
 
+## Gestão integrada (v0.4.0)
+
+Segunda devolutiva (10/11/2026): a ferramenta passou a cobrir também o trabalho do próprio Marketing, não só as solicitações de outras áreas. Detalhes e classificação de cada item em `docs/MATRIZ-DEVOLUTIVA-2.md`.
+
+- **Origens:** *Solicitação de outra área* (formulário oficial, triagem, aceite) e *Atividade do Marketing* (cadastro interno, sem briefing nem aceite do solicitante; nasce Planejada com responsável e prazo). Direito novo **Cadastro interno** (bit 4096).
+- **Estrutura:** pilar/frente → projeto → plano de ação → atividade → subtarefa. Pilares em Configurações → Pilares; projetos (com marcos) e planos no menu **Projetos e planos**. Tudo é opcional: demanda avulsa continua valendo.
+- **Plano a partir da demanda:** botão "Criar plano de ação" na ficha (depois da triagem). A demanda-mãe só conclui quando as atividades estiverem concluídas ou canceladas, mais evidência e aceite se for externa. "Depende de" impede iniciar uma atividade antes da anterior.
+- **Painel:** filtros por origem, pilar e projeto; cartões *Solicitações recebidas*, *Atividades internas* e *Entregas de projetos*; gráficos de origem, pilar e projetos.
+- **SLOs:** grupo, processo, aplicabilidade (externa/interna/todas), vigência, situações que pausam a contagem e **homologação**: só ligam se estiverem Homologados com a evidência do aceite.
+
 ## Instalação e atualização
 
 ```bash
@@ -75,6 +85,7 @@ Atualizar: copie a pasta para `plugins/marketing`, ajuste o dono (`www-data`) e 
 
 ```bash
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/gestao.php   # pop-up, notificações, automações, SLOs, painel, PDF
+sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/estrutura.php   # origens, pilar/projeto/plano, dependências, homologação e pausa de SLO
 # também: poc.php, fase1.php, fase1b.php
 ```
 

@@ -10,12 +10,14 @@ use Session;
  *
  * Bits: READ, CREATE, UPDATE, PURGE (nativos) e
  *   APPROVE   registrar decisão de aprovação e concluir com exceção;
- *   CONFIGURE tipos, SLOs, notificações e automações (perfil Administrador).
+ *   CONFIGURE tipos, SLOs, notificações e automações (perfil Administrador);
+ *   INTERNAL  cadastro interno do Marketing: atividades, projetos e planos de ação, sem o formulário de solicitação.
  */
 class Access extends Base
 {
     public const APPROVE = 1024;
     public const CONFIGURE = 2048;
+    public const INTERNAL = 4096;
 
     public static function getTypeName($nb = 0)
     {
@@ -59,6 +61,12 @@ class Access extends Base
         return Session::haveRight(self::$rightname, self::CONFIGURE);
     }
 
+    /** Bit de cadastro interno (atividades próprias do Marketing, projetos e planos de ação). */
+    public static function canInternal(): bool
+    {
+        return Session::haveRight(self::$rightname, self::INTERNAL);
+    }
+
     private static function page(string $path): string
     {
         return '/plugins/marketing' . $path;
@@ -74,6 +82,8 @@ class Access extends Base
             'dashboard' => ['title' => 'Painel de Demandas', 'page' => self::page('/front/dashboard.php'), 'icon' => 'ti ti-chart-pie'],
             'demands'   => ['title' => 'Demandas', 'page' => self::page('/front/demands.php'), 'icon' => 'ti ti-speakerphone',
                 'links' => self::canCreate() ? ['add' => self::page('/front/demand.php?id=0'), 'search' => self::page('/front/demands.php')] : []],
+            'projects'  => ['title' => 'Projetos e planos', 'page' => self::page('/front/projects.php'), 'icon' => 'ti ti-hierarchy-2',
+                'links' => self::canInternal() ? ['add' => self::page('/front/activity.php')] : []],
             'kanban'    => ['title' => 'Quadro Kanban', 'page' => self::page('/front/kanban.php'), 'icon' => 'ti ti-layout-kanban'],
         ];
         if (self::canConfigure()) {

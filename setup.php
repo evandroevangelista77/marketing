@@ -9,7 +9,7 @@ use Glpi\Plugin\Hooks;
 use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\ProfileTab;
 
-define('PLUGIN_MARKETING_VERSION', '0.3.0');
+define('PLUGIN_MARKETING_VERSION', '0.4.0');
 define('PLUGIN_MARKETING_MIN_GLPI', '11.0.0');
 define('PLUGIN_MARKETING_MAX_GLPI', '12.0.99');
 
@@ -24,10 +24,11 @@ function plugin_init_marketing(): void
     Plugin::registerClass(ProfileTab::class, ['addtabon' => [Profile::class]]);
     Plugin::registerClass(Access::class);
 
-    // sessões abertas antes da instalação ainda não têm o direito do plugin
-    if (isset($_SESSION['glpiactiveprofile']['id']) && !isset($_SESSION['glpiactiveprofile'][Access::$rightname])) {
+    // sessões abertas antes da instalação (ou antes de uma atualização que acrescentou bits) recarregam o direito uma vez por versão
+    if (isset($_SESSION['glpiactiveprofile']['id']) && (!isset($_SESSION['glpiactiveprofile'][Access::$rightname]) || ($_SESSION['marketing_rights_version'] ?? '') !== PLUGIN_MARKETING_VERSION)) {
         $rights = ProfileRight::getProfileRights($_SESSION['glpiactiveprofile']['id'], [Access::$rightname]);
         $_SESSION['glpiactiveprofile'][Access::$rightname] = (int) ($rights[Access::$rightname] ?? 0);
+        $_SESSION['marketing_rights_version'] = PLUGIN_MARKETING_VERSION;
     }
 
     // seção "Marketing" no menu lateral

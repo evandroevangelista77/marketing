@@ -35,13 +35,16 @@ class Dashboard
             'area'     => mb_substr(trim((string) ($get['area'] ?? '')), 0, 120),
             'assignee' => max(0, (int) ($get['assignee'] ?? 0)),
             'status'   => isset(Demand::STATUSES[$status]) ? $status : '',
+            'origin'   => isset(Demand::ORIGINS[(string) ($get['origin'] ?? '')]) ? (string) $get['origin'] : '',
+            'pillar'   => max(0, (int) ($get['pillar'] ?? 0)),
+            'project'  => max(0, (int) ($get['project'] ?? 0)),
         ];
     }
 
     /** Parâmetros da URL para repetir os filtros em links (PDF, paginação). */
     public static function query(array $f): string
     {
-        $q = ['from' => $f['from'], 'to' => $f['to'], 'type' => $f['types_id'] ?: '', 'area' => $f['area'], 'assignee' => $f['assignee'] ?: '', 'status' => $f['status']];
+        $q = ['from' => $f['from'], 'to' => $f['to'], 'type' => $f['types_id'] ?: '', 'area' => $f['area'], 'assignee' => $f['assignee'] ?: '', 'status' => $f['status'], 'origin' => $f['origin'], 'pillar' => $f['pillar'] ?: '', 'project' => $f['project'] ?: ''];
         return http_build_query(array_filter($q, fn ($v) => $v !== '' && $v !== null));
     }
 
@@ -67,6 +70,15 @@ class Dashboard
         }
         if ($f['status'] !== '') {
             $where['status'] = $f['status'];
+        }
+        if (($f['origin'] ?? '') !== '') {
+            $where['origin'] = $f['origin'];
+        }
+        if (($f['pillar'] ?? 0) > 0) {
+            $where['pillars_id'] = $f['pillar'];
+        }
+        if (($f['project'] ?? 0) > 0) {
+            $where['mkt_projects_id'] = $f['project'];
         }
         $rows = [];
         foreach ($DB->request(['FROM' => Demand::getTable(), 'WHERE' => $where, 'ORDER' => 'id DESC']) as $r) {
@@ -157,8 +169,27 @@ class Dashboard
             }
         }
 
+        // operação integrada: volume por origem, entregas ligadas a projeto, e quebra por pilar e projeto
+        $ids['external'] = $ids['internal'] = $ids['project_done'] = $ids['project'] = [];
+        $byPillar = $byProject = [];
+        foreach ($rows as $rid => $r) {
+            $ids[$r['origin'] === Demand::ORIGIN_INTERNAL ? 'internal' : 'external'][] = $rid;
+            if ((int) $r['mkt_projects_id'] > 0) {
+                $ids['project'][] = $rid;
+                if ($r['status'] === Demand::STATUS_DONE) {
+                    $ids['project_done'][] = $rid;
+                }
+            }
+            $byPillar[(int) $r['pillars_id']][] = $rid;
+            if ((int) $r['mkt_projects_id'] > 0) {
+                $byProject[(int) $r['mkt_projects_id']][] = $rid;
+            }
+        }
+
         return [
             'filters'     => $f,
+            'by_pillar'   => $byPillar,
+            'by_project'  => $byProject,
             'rows'        => $rows,
             'ids'         => $ids,
             'by_status'   => $byStatus,
@@ -406,6 +437,12 @@ class Dashboard
                 'lead' => 'Demandas em aberto que ainda não têm um responsável.'],
             'slo'        => ['title' => 'Fora do SLO', 'icon' => 'ti-hourglass-high', 'color' => '#eab308', 'value' => $slosOn ? $n('slo') : '—', 'sub' => $slosOn ? $slosOn . ' SLO(s) ativo(s)' : 'nenhum SLO ativo', 'ids' => $d['ids']['slo'],
                 'lead' => $slosOn ? 'Demandas que estouraram o prazo de algum SLO ativo (cumpridas fora do prazo ou ainda em andamento e vencidas).' : 'Nenhum SLO está ativo. Ative em Configurações → SLOs depois da homologação.'],
+            'external'   => ['title' => 'Solicitações recebidas', 'icon' => 'ti-inbox', 'color' => '#f59e0b', 'value' => $n('external'), 'sub' => 'vindas de outras áreas', 'ids' => $d['ids']['external'],
+                'lead' => 'Demandas abertas por outras áreas pelo formulário oficial (origem externa).'],
+            'internal'   => ['title' => 'Atividades internas', 'icon' => 'ti-building', 'color' => '#6366f1', 'value' => $n('internal'), 'sub' => 'cadastradas pelo Marketing', 'ids' => $d['ids']['internal'],
+                'lead' => 'Atividades cadastradas pelo próprio Marketing, sem formulário de solicitação (origem interna).'],
+            'project'    => ['title' => 'Entregas de projetos', 'icon' => 'ti-hierarchy-2', 'color' => '#14b8a6', 'value' => count($d['ids']['project_done']), 'sub' => 'concluídas de ' . $n('project') . ' ligadas a projetos', 'ids' => $d['ids']['project'],
+                'lead' => 'Atividades e demandas vinculadas a um projeto; o número é o de concluídas.'],
             'avg'        => ['title' => 'Tempo médio de conclusão', 'icon' => 'ti-clock-hour-4', 'color' => '#0ea5e9', 'value' => $d['avg_days'] === null ? '—' : str_replace('.', ',', (string) $d['avg_days']) . ' d', 'sub' => 'da entrada à conclusão', 'ids' => $d['ids']['done'],
                 'lead' => 'Média, em dias corridos, entre a entrada da demanda e a conclusão. Lista das concluídas.'],
             'ontime'     => ['title' => 'Entregas no prazo', 'icon' => 'ti-target-arrow', 'color' => '#14b8a6', 'value' => $d['ontime_pct'] === null ? '—' : $d['ontime_pct'] . '%', 'sub' => count($d['ids']['ontime']) . ' de ' . (count($d['ids']['ontime']) + count($d['ids']['late_done'])) . ' concluídas com prazo', 'ids' => array_merge($d['ids']['ontime'], $d['ids']['late_done']),

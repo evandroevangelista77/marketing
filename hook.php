@@ -12,7 +12,9 @@ use GlpiPlugin\Marketing\Cron;
 use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Note;
 use GlpiPlugin\Marketing\Outbox;
+use GlpiPlugin\Marketing\Settings;
 use GlpiPlugin\Marketing\Slo;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Type;
 
 /** Todas as tabelas do plugin, na ordem de criação. */
@@ -21,6 +23,7 @@ function plugin_marketing_tables(): array
     return [
         Demand::getTable(), Demand::getEventsTable(), Demand::getEvidencesTable(), Demand::getApprovalsTable(),
         Type::getTable(), Slo::getTable(), Automation::getTable(), Alert::getTable(), Note::getTable(), Outbox::getTable(),
+        Structure::pillarsTable(), Structure::projectsTable(), Structure::plansTable(), Structure::milestonesTable(),
     ];
 }
 
@@ -76,6 +79,18 @@ function plugin_marketing_install(): bool
         `dedup_key` varchar(120) DEFAULT NULL, `date_creation` timestamp NULL DEFAULT NULL, `sent_at` timestamp NULL DEFAULT NULL, `error` varchar(255) DEFAULT NULL,
         PRIMARY KEY (`id`), KEY `pending` (`sent_at`,`error`), KEY `dedup` (`dedup_key`)");
 
+    // estrutura de planejamento (v0.4): pilar → projeto → plano de ação → atividade
+    $create(Structure::pillarsTable(), "$id, `name` varchar(120) NOT NULL, `color` char(7) NOT NULL DEFAULT '#6366f1', `description` text, `users_id` $int,
+        `is_archived` tinyint NOT NULL DEFAULT 0, `date_creation` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`)");
+    $create(Structure::projectsTable(), "$id, `pillars_id` $int, `name` varchar(160) NOT NULL, `objective` text, `users_id` $int, `start_date` date DEFAULT NULL,
+        `end_date` date DEFAULT NULL, `status` varchar(12) NOT NULL DEFAULT 'planning', `is_archived` tinyint NOT NULL DEFAULT 0, `date_creation` timestamp NULL DEFAULT NULL,
+        PRIMARY KEY (`id`), KEY `pillar` (`pillars_id`)");
+    $create(Structure::plansTable(), "$id, `mkt_projects_id` $int, `source_demands_id` $int, `name` varchar(160) NOT NULL, `objective` text, `users_id` $int,
+        `start_date` date DEFAULT NULL, `end_date` date DEFAULT NULL, `criteria` text, `is_archived` tinyint NOT NULL DEFAULT 0, `date_creation` timestamp NULL DEFAULT NULL,
+        PRIMARY KEY (`id`), KEY `project` (`mkt_projects_id`), KEY `source` (`source_demands_id`)");
+    $create(Structure::milestonesTable(), "$id, `mkt_projects_id` $int, `name` varchar(160) NOT NULL, `due_date` date DEFAULT NULL, `is_done` tinyint NOT NULL DEFAULT 0,
+        PRIMARY KEY (`id`), KEY `project` (`mkt_projects_id`)");
+
     // colunas acrescentadas depois da primeira versão (cada uma só é criada se faltar)
     $newColumns = [
         'accepted_at'       => 'timestamp NULL DEFAULT NULL',
@@ -84,11 +99,43 @@ function plugin_marketing_install(): bool
         'exception_note'    => 'text',
         'types_id'          => $int,
         'completed_at'      => 'timestamp NULL DEFAULT NULL',
+        // v0.4: origem (external = outra área, internal = Marketing), vínculos com a estrutura e dependência
+        'origin'            => "varchar(10) NOT NULL DEFAULT 'external'",
+        'pillars_id'        => $int,
+        'mkt_projects_id'   => $int,
+        'plans_id'          => $int,
+        'parent_id'         => $int,
+        'depends_on_id'     => $int,
+        'start_date'        => 'date DEFAULT NULL',
     ];
     foreach ($newColumns as $column => $definition) {
         if (!$DB->fieldExists(Demand::getTable(), $column)) {
             $DB->doQuery("ALTER TABLE `" . Demand::getTable() . "` ADD `$column` $definition");
         }
+    }
+
+    // colunas de homologação e pausa dos SLOs (v0.4)
+    $sloColumns = [
+        'grp'            => "varchar(12) NOT NULL DEFAULT 'triage'",
+        'process'        => "varchar(160) NOT NULL DEFAULT ''",
+        'pause_statuses' => "varchar(255) NOT NULL DEFAULT ''",
+        'applies_to'     => "varchar(10) NOT NULL DEFAULT 'external'",
+        'hom_status'     => "varchar(10) NOT NULL DEFAULT 'draft'",
+        'hom_evidence'   => 'text',
+        'hom_users_id'   => $int,
+        'hom_date'       => 'timestamp NULL DEFAULT NULL',
+        'valid_from'     => 'date DEFAULT NULL',
+        'valid_to'       => 'date DEFAULT NULL',
+    ];
+    $sloIsNew = !$DB->fieldExists(Slo::getTable(), 'hom_status');
+    foreach ($sloColumns as $column => $definition) {
+        if (!$DB->fieldExists(Slo::getTable(), $column)) {
+            $DB->doQuery("ALTER TABLE `" . Slo::getTable() . "` ADD `$column` $definition");
+        }
+    }
+    if ($sloIsNew) {
+        // SLOs que já estavam ligados antes da homologação existir continuam valendo (marcados como homologados na migração)
+        $DB->update(Slo::getTable(), ['hom_status' => 'approved', 'hom_evidence' => 'Migração v0.4: SLO já estava ativo.', 'hom_date' => date('Y-m-d H:i:s')], ['is_active' => 1]);
     }
 
     plugin_marketing_seed();
@@ -101,7 +148,7 @@ function plugin_marketing_install(): bool
     // direito "plugin_marketing" (aba em Perfis). Padrão: central com UPDATE = tudo; demais = leitura
     if (!countElementsInTable(ProfileRight::getTable(), ['name' => Access::$rightname])) {
         ProfileRight::addProfileRights([Access::$rightname]);
-        $all   = ALLSTANDARDRIGHT | Access::APPROVE | Access::CONFIGURE;
+        $all   = ALLSTANDARDRIGHT | Access::APPROVE | Access::CONFIGURE | Access::INTERNAL;
         $basic = READ;
         foreach ($DB->request(['SELECT' => ['id', 'name'], 'FROM' => Profile::getTable(), 'WHERE' => ['interface' => 'central']]) as $row) {
             $config = ProfileRight::getProfileRights($row['id'], ['config'])['config'] ?? 0;
@@ -112,6 +159,16 @@ function plugin_marketing_install(): bool
                 ['profiles_id' => $row['id'], 'name' => Access::$rightname]
             );
         }
+    }
+
+    // v0.4: bit "Cadastro interno" (4096). Quem já administrava o plugin ganha o bit uma única vez (depois o administrador pode retirar)
+    if (Settings::get('rights_internal_granted', '0') !== '1') {
+        foreach ($DB->request(['FROM' => ProfileRight::getTable(), 'WHERE' => ['name' => Access::$rightname]]) as $row) {
+            if (((int) $row['rights'] & Access::CONFIGURE) || ((int) $row['rights'] & UPDATE)) {
+                $DB->update(ProfileRight::getTable(), ['rights' => (int) $row['rights'] | Access::INTERNAL], ['id' => $row['id']]);
+            }
+        }
+        Settings::save(['rights_internal_granted' => '1']);
     }
 
     // sessão já aberta passa a enxergar o direito sem novo login
@@ -147,6 +204,24 @@ function plugin_marketing_seed(): void
             ['Definição de responsável e prazo', 'triage', 'planned', 4],
         ] as [$name, $from, $to, $days]) {
             $DB->insert(Slo::getTable(), ['name' => $name, 'from_status' => $from, 'to_statuses' => $to, 'limit_days' => $days, 'is_active' => 0, 'date_creation' => $now]);
+        }
+    }
+
+    // §3.5 do debriefing: marcos do processo central que cabem em "de um estado a outro"; nascem desligados e sem homologação.
+    // "Atualização semanal" e "Fechamento documental" dependem de gatilhos novos (última atualização, aceite) e não são semeados.
+    foreach ([
+        ['Pedido de complementação', 'triage', 'waiting_requester', 1, 'Entrada e triagem'],
+        ['Validação do briefing completo', 'waiting_requester', 'triage', 2, 'Entrada e triagem'],
+    ] as [$name, $from, $to, $days, $process]) {
+        if (!countElementsInTable(Slo::getTable(), ['name' => $name])) {
+            $DB->insert(Slo::getTable(), ['name' => $name, 'from_status' => $from, 'to_statuses' => $to, 'limit_days' => $days, 'process' => $process, 'grp' => 'triage', 'is_active' => 0, 'date_creation' => $now]);
+        }
+    }
+
+    // pilares sugeridos (editáveis em Configurações → Pilares e projetos)
+    if (!countElementsInTable(Structure::pillarsTable())) {
+        foreach ([['Geração de Demanda', '#6366f1'], ['Comunicação e Marca', '#0ea5e9'], ['Conteúdo', '#22c55e'], ['Eventos', '#f59e0b'], ['CRM e Inteligência', '#a855f7']] as [$name, $color]) {
+            $DB->insert(Structure::pillarsTable(), ['name' => $name, 'color' => $color, 'date_creation' => $now]);
         }
     }
 

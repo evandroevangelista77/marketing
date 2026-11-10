@@ -11,6 +11,7 @@ use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Outbox;
 use GlpiPlugin\Marketing\Settings;
 use GlpiPlugin\Marketing\Slo;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Type;
 use GlpiPlugin\Marketing\Ui;
 
@@ -21,7 +22,7 @@ if (!Access::canConfigure()) {
 global $DB;
 
 $e = fn ($v) => Ui::e($v);
-$tabs = ['demandas' => 'Demandas e tipos', 'status' => 'Status e cores', 'slos' => 'SLOs', 'notificacoes' => 'Notificações', 'automacoes' => 'Automações'];
+$tabs = ['demandas' => 'Demandas e tipos', 'estrutura' => 'Pilares', 'status' => 'Status e cores', 'slos' => 'SLOs', 'notificacoes' => 'Notificações', 'automacoes' => 'Automações'];
 $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'demandas';
 $users = Ui::userOptions();
 $action = Ui::url('/front/action.php');
@@ -79,6 +80,24 @@ if ($tab === 'demandas') {
     echo "<div class='card card-body'><h3 class='card-title'>Novo tipo</h3>" . $form('type_save', $inner, 0, 'Criar tipo') . "</div>";
 }
 
+// ================================================================== pilares
+if ($tab === 'estrutura') {
+    $pillarForm = fn (array $r) => "<div class='row g-2'><div class='col-md-3'><label class='form-label'>Pilar / frente</label><input class='form-control' name='name' value='" . $e($r['name'] ?? '') . "' required></div>"
+        . "<div class='col-md-2'><label class='form-label'>Cor</label><input class='form-control form-control-color' type='color' name='color' value='" . $e($r['color'] ?? '#6366f1') . "'></div>"
+        . "<div class='col-md-3'><label class='form-label'>Responsável</label>" . Ui::select('users_id', $users, $r['users_id'] ?? 0, '', true, 'Ninguém') . "</div>"
+        . "<div class='col-md-4'><label class='form-label'>Descrição</label><input class='form-control' name='description' value='" . $e($r['description'] ?? '') . "'></div>"
+        . "<div class='col-12'>" . $check('is_archived', !empty($r['is_archived']), 'Arquivado (some das listas de escolha, mas o histórico fica)') . "</div></div>";
+    echo "<div class='alert alert-info'><div>Pilares (ou frentes) são o primeiro nível da estrutura <b>pilar → projeto → plano de ação → atividade</b>. Cadastre e edite aqui, sem mexer em código. Projetos e planos são criados em <a href='" . $e(Ui::url('/front/projects.php')) . "'>Projetos e planos</a>.</div></div>";
+    echo "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>Pilares</h3></div><div class='table-responsive'><table class='table card-table'><thead><tr><th>Pilar</th><th>Responsável</th><th>Projetos</th><th>Situação</th></tr></thead><tbody>";
+    foreach (Structure::pillars() as $r) {
+        $n = countElementsInTable(Structure::projectsTable(), ['pillars_id' => (int) $r['id']]);
+        echo "<tr><td>" . Ui::badge($r['name'], $r['color']) . "</td><td>" . $e((int) $r['users_id'] > 0 ? getUserName((int) $r['users_id']) : '—') . "</td><td>$n</td><td>" . ($r['is_archived'] ? 'Arquivado' : 'Ativo') . "</td></tr>"
+            . $editRow(4, $form('pillar_save', $pillarForm($r), (int) $r['id']));
+    }
+    echo "</tbody></table></div></div>";
+    echo "<div class='card card-body'><h3 class='card-title'>Novo pilar</h3>" . $form('pillar_save', $pillarForm([]), 0, 'Criar pilar') . "</div>";
+}
+
 // ================================================================== status e cores
 if ($tab === 'status') {
     $colors = Settings::statusColors();
@@ -97,22 +116,36 @@ if ($tab === 'slos') {
         $calendars[(int) $c['id']] = $c['name'];
     }
     $sloForm = function (array $s) use ($e, $check, $users, $calendars): string {
+        $pausing = array_filter(explode(',', (string) ($s['pause_statuses'] ?? '')));
+        $pauseBoxes = '';
+        foreach (Demand::STATUSES as $k => $label) {
+            $pauseBoxes .= $check('pause_list[]', in_array($k, $pausing, true), $label, $k);
+        }
         return "<div class='row g-2'><div class='col-md-4'><label class='form-label'>Nome</label><input class='form-control' name='name' value='" . $e($s['name'] ?? '') . "' required></div>"
+            . "<div class='col-md-3'><label class='form-label'>Grupo</label>" . Ui::select('grp', Slo::GROUPS, $s['grp'] ?? 'triage') . "</div>"
+            . "<div class='col-md-5'><label class='form-label'>Processo e etapa</label><input class='form-control' name='process' value='" . $e($s['process'] ?? '') . "' placeholder='Ex.: Entrada e triagem · confirmação de recebimento'></div>"
             . "<div class='col-md-2'><label class='form-label'>Começa quando entra em</label>" . Ui::select('from_status', Demand::STATUSES, $s['from_status'] ?? 'received') . "</div>"
             . "<div class='col-md-3'><label class='form-label'>Termina ao chegar a (separe por vírgula)</label><input class='form-control' name='to_statuses' value='" . $e($s['to_statuses'] ?? '') . "' placeholder='triage,planned' required></div>"
             . "<div class='col-md-1'><label class='form-label'>Dias úteis</label><input class='form-control' type='number' min='1' max='365' name='limit_days' value='" . $e($s['limit_days'] ?? 1) . "'></div>"
-            . "<div class='col-md-2'><label class='form-label'>Calendário</label>" . Ui::select('calendars_id', $calendars, $s['calendars_id'] ?? 0, '', true, 'Seg–sex') . "</div>"
+            . "<div class='col-md-3'><label class='form-label'>Calendário (feriados)</label>" . Ui::select('calendars_id', $calendars, $s['calendars_id'] ?? 0, '', true, 'Seg–sex') . "</div>"
+            . "<div class='col-md-3'><label class='form-label'>Vale para</label>" . Ui::select('applies_to', Slo::APPLIES, $s['applies_to'] ?? 'external') . "</div>"
             . "<div class='col-md-4'><label class='form-label'>Escalonar para</label>" . Ui::select('users_id_escalate', $users, $s['users_id_escalate'] ?? 0, '', true, 'Ninguém') . "</div>"
-            . "<div class='col-md-8 d-flex align-items-end'>" . $check('is_active', !empty($s['is_active']), 'SLO ativo (só ligue após a homologação, RF-017)') . "</div></div>";
+            . "<div class='col-md-12'><div class='small fw-bold'>Situações que pausam a contagem (o tempo parado nelas empurra o vencimento)</div>$pauseBoxes</div>"
+            . "<div class='col-md-2'><label class='form-label'>Vigência: de</label><input class='form-control' type='date' name='valid_from' value='" . $e($s['valid_from'] ?? '') . "'></div>"
+            . "<div class='col-md-2'><label class='form-label'>até</label><input class='form-control' type='date' name='valid_to' value='" . $e($s['valid_to'] ?? '') . "'></div>"
+            . "<div class='col-md-3'><label class='form-label'>Homologação</label>" . Ui::select('hom_status', Slo::HOM_STATUSES, $s['hom_status'] ?? 'draft') . "</div>"
+            . "<div class='col-md-5'><label class='form-label'>Evidência do aceite (ata, e-mail, link)</label><input class='form-control' name='hom_evidence' value='" . $e($s['hom_evidence'] ?? '') . "'></div>"
+            . "<div class='col-md-12'>" . $check('is_active', !empty($s['is_active']), 'SLO ativo (só liga se estiver Homologado e com a evidência do aceite, RF-017)') . "</div></div>";
     };
-    echo "<div class='alert alert-info'><div>Os SLOs medem o tempo entre a entrada da demanda num estado e a chegada a um estado final, em dias úteis pelo calendário escolhido. Os valores iniciais vêm do briefing e <b>nascem desligados</b> até a homologação (RF-017). Quando um SLO vence, o responsável (e quem for escalonado) recebe o aviso.</div></div>";
+    echo "<div class='alert alert-info'><div>Os SLOs medem o tempo entre a entrada da demanda num estado e a chegada a um estado final, em dias úteis pelo calendário escolhido. Os valores iniciais vêm do briefing e <b>nascem desligados e em rascunho</b>: só ligam depois de <b>homologados</b>, com a evidência do aceite (RF-017). Cada SLO é um indicador independente: o painel não soma SLOs de etapas diferentes, e eles não se confundem com o prazo confirmado da entrega nem com o prazo da tarefa. Quando um SLO vence, o responsável (e quem for escalonado) recebe o aviso.</div></div>";
     echo "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>SLOs</h3></div><div class='table-responsive'><table class='table card-table'>";
-    echo "<thead><tr><th>SLO</th><th>Mede</th><th>Prazo</th><th>Situação</th></tr></thead><tbody>";
+    echo "<thead><tr><th>SLO</th><th>Grupo</th><th>Mede</th><th>Prazo</th><th>Homologação</th><th>Situação</th></tr></thead><tbody>";
     foreach (Slo::all() as $s) {
         $to = implode(', ', array_map(fn ($k) => Demand::STATUSES[$k] ?? $k, array_filter(explode(',', $s['to_statuses']))));
-        echo "<tr><td>" . $e($s['name']) . "</td><td class='small'>" . $e((Demand::STATUSES[$s['from_status']] ?? $s['from_status']) . ' → ' . $to) . "</td><td>" . (int) $s['limit_days'] . " dia(s) útil(eis)</td>"
+        echo "<tr><td>" . $e($s['name']) . "</td><td class='small'>" . $e(Slo::GROUPS[$s['grp']] ?? '') . "</td><td class='small'>" . $e((Demand::STATUSES[$s['from_status']] ?? $s['from_status']) . ' → ' . $to) . "</td><td>" . (int) $s['limit_days'] . " dia(s) útil(eis)</td>"
+            . "<td>" . ($s['hom_status'] === 'approved' ? Ui::badge('Homologado', '#22c55e') : Ui::badge(Slo::HOM_STATUSES[$s['hom_status']] ?? '—', '#94a3b8')) . "</td>"
             . "<td>" . ($s['is_active'] ? Ui::badge('Ativo', '#22c55e') : Ui::badge('Desligado', '#94a3b8')) . "</td></tr>"
-            . $editRow(4, $form('slo_save', $sloForm($s), (int) $s['id']) . $form('slo_delete', '', (int) $s['id'], 'Remover', 'btn-outline-danger btn-sm'));
+            . $editRow(6, $form('slo_save', $sloForm($s), (int) $s['id']) . $form('slo_delete', '', (int) $s['id'], 'Remover', 'btn-outline-danger btn-sm'));
     }
     echo "</tbody></table></div></div>";
     echo "<div class='card card-body'><h3 class='card-title'>Novo SLO</h3>" . $form('slo_save', $sloForm([]), 0, 'Criar SLO') . "</div>";

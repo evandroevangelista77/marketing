@@ -11,6 +11,7 @@ use GlpiPlugin\Marketing\Automation;
 use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Settings;
 use GlpiPlugin\Marketing\Slo;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Type;
 use GlpiPlugin\Marketing\Ui;
 
@@ -41,7 +42,7 @@ $load = function (bool $forUpdate) use ($id, $denied): Demand {
 $back = fn (int $demandId) => $go('/front/demand.php?id=' . $demandId);
 
 // ================================================================== configurações (direito de configurar)
-if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', 'slo_save', 'slo_delete', 'auto_save', 'auto_toggle', 'auto_delete'], true)) {
+if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', 'slo_save', 'slo_delete', 'auto_save', 'auto_toggle', 'auto_delete', 'pillar_save'], true)) {
     if (!Access::canConfigure()) {
         throw $denied();
     }
@@ -90,12 +91,17 @@ if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', '
         case 'slo_save':
             $saved = Slo::save($id, $p);
             $tab = 'slos';
-            $msg($saved ? 'SLO salvo.' : 'Informe o nome e ao menos um estado final válido.', (bool) $saved);
+            $msg($saved > 0 ? 'SLO salvo.' . (!empty($p['is_active']) && !Slo::isHomologated($saved) ? ' Ele só fica ativo depois de homologado (com a evidência do aceite).' : '') : 'Informe o nome e ao menos um estado final válido.', $saved > 0);
             break;
         case 'slo_delete':
             $DB->delete(Slo::getTable(), ['id' => $id]);
             $tab = 'slos';
             $msg('SLO removido.');
+            break;
+        case 'pillar_save':
+            $saved = Structure::savePillar($id, $p);
+            $tab = 'estrutura';
+            $msg($saved ? 'Pilar salvo.' : 'Informe o nome do pilar.', (bool) $saved);
             break;
         case 'auto_save':
             $saved = Automation::save($id, $p);
@@ -117,6 +123,122 @@ if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', '
             break;
     }
     $go('/front/config.php?tab=' . $tab);
+}
+
+// ================================================================== estrutura: atividades internas, projetos, planos
+/** Cadastro interno exige o bit próprio (separado do formulário de solicitação). */
+$needInternal = function () use ($denied): void {
+    if (!Access::canInternal()) {
+        throw $denied();
+    }
+};
+$structureInput = fn () => [
+    'pillars_id' => (int) ($p['pillars_id'] ?? 0), 'mkt_projects_id' => (int) ($p['mkt_projects_id'] ?? 0), 'plans_id' => (int) ($p['plans_id'] ?? 0),
+];
+
+if ($do === 'activity_create') {
+    $needInternal();
+    $newId = Demand::createActivity($structureInput() + [
+        'name' => $p['name'] ?? '', 'objective' => $p['objective'] ?? '', 'deliverable' => $p['deliverable'] ?? '',
+        'users_id_assigned' => $p['users_id_assigned'] ?? 0, 'start_date' => $p['start_date'] ?? '', 'confirmed_date' => $p['confirmed_date'] ?? '',
+        'priority' => $p['priority'] ?? 3, 'types_id' => $p['types_id'] ?? 0, 'depends_on_id' => $p['depends_on_id'] ?? 0,
+    ]);
+    $msg($newId ? 'Atividade cadastrada.' : 'Informe o título da atividade.', (bool) $newId);
+    $newId ? $back($newId) : $go('/front/activity.php');
+}
+
+if ($do === 'subtask_create') {
+    $needInternal();
+    $parent = $load(false);
+    $newId = Demand::createActivity([
+        'name' => $p['name'] ?? '', 'users_id_assigned' => $p['users_id_assigned'] ?? 0, 'confirmed_date' => $p['confirmed_date'] ?? '',
+        'priority' => $parent->fields['priority'], 'types_id' => $parent->fields['types_id'], 'parent_id' => $id,
+        'pillars_id' => $parent->fields['pillars_id'], 'mkt_projects_id' => $parent->fields['mkt_projects_id'], 'plans_id' => $parent->fields['plans_id'],
+    ]);
+    $msg($newId ? 'Atividade adicionada ao plano.' : 'Informe o título.', (bool) $newId);
+    $back($id);
+}
+
+if ($do === 'plan_create') {
+    // "Criar plano de ação" na ficha da demanda: o plano guarda o código original e as atividades ficam vinculadas à demanda-mãe
+    $needInternal();
+    $demand = $load(true);
+    if ((int) ($demand->fields['plans_id'] ?? 0) > 0) {
+        $msg('Esta demanda já tem plano de ação.', false);
+        $back($id);
+    }
+    if (!Demand::isOpen($demand->fields) || in_array($demand->fields['status'], [Demand::STATUS_RECEIVED, Demand::STATUS_TRIAGE, Demand::STATUS_WAITING_REQUESTER], true)) {
+        $msg('Crie o plano depois da triagem e do aceite (demanda planejada ou em andamento).', false);
+        $back($id);
+    }
+    [$pillar, $project] = Structure::normalizeLinks((int) ($p['pillars_id'] ?? $demand->fields['pillars_id']), (int) ($p['mkt_projects_id'] ?? 0), 0);
+    $planId = Structure::savePlan(0, [
+        'name' => trim((string) ($p['name'] ?? '')) ?: $demand->fields['name'], 'mkt_projects_id' => $project, 'source_demands_id' => $id,
+        'objective' => $demand->fields['objective'] ?? '', 'users_id' => (int) ($p['users_id'] ?? 0) ?: (int) $demand->fields['users_id_assigned'],
+        'start_date' => $p['start_date'] ?? '', 'end_date' => ($p['end_date'] ?? '') ?: $demand->fields['confirmed_date'], 'criteria' => $p['criteria'] ?? '',
+    ]);
+    $DB->update(Demand::getTable(), ['plans_id' => $planId, 'pillars_id' => $pillar, 'mkt_projects_id' => $project, 'date_mod' => date('Y-m-d H:i:s')], ['id' => $id]);
+    $demand->getFromDB($id);
+    $demand->addEvent('plan', '', (string) $planId, 'Plano de ação criado a partir desta demanda');
+    $made = 0;
+    $owner = (int) ($p['users_id'] ?? 0) ?: (int) $demand->fields['users_id_assigned'];
+    foreach (array_slice(preg_split('/\R/', (string) ($p['activities'] ?? '')) ?: [], 0, 60) as $line) {
+        // formato: "Título" ou "Título | AAAA-MM-DD" (prazo)
+        [$title, $due] = array_pad(array_map('trim', explode('|', $line, 2)), 2, '');
+        if ($title === '') {
+            continue;
+        }
+        $made += Demand::createActivity([
+            'name' => $title, 'confirmed_date' => $due, 'users_id_assigned' => $owner, 'priority' => $demand->fields['priority'], 'types_id' => $demand->fields['types_id'],
+            'parent_id' => $id, 'pillars_id' => $pillar, 'mkt_projects_id' => $project, 'plans_id' => $planId,
+        ]) > 0 ? 1 : 0;
+    }
+    $msg('Plano de ação criado' . ($made ? " com $made atividade(s)" : '') . '.');
+    $go('/front/plan.php?id=' . $planId);
+}
+
+if ($do === 'link_save') {
+    // pilar, projeto, plano, dependência e início da demanda/atividade
+    if (!Access::canUpdate() && !Access::canInternal()) {
+        throw $denied();
+    }
+    $demand = $load(false);
+    [$pillar, $project, $plan] = Structure::normalizeLinks((int) ($p['pillars_id'] ?? 0), (int) ($p['mkt_projects_id'] ?? 0), (int) ($p['plans_id'] ?? 0));
+    $dep = (int) ($p['depends_on_id'] ?? 0);
+    $depCode = '';
+    if ($dep > 0) {
+        $d2 = new Demand();
+        $dep = ($d2->getFromDB($dep) && $dep !== $id) ? $dep : 0;
+    }
+    $start = ($p['start_date'] ?? '') && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p['start_date']) ? $p['start_date'] : null;
+    $DB->update(Demand::getTable(), ['pillars_id' => $pillar, 'mkt_projects_id' => $project, 'plans_id' => $plan, 'depends_on_id' => $dep, 'start_date' => $start, 'date_mod' => date('Y-m-d H:i:s')], ['id' => $id]);
+    $demand->addEvent('link', '', '', 'Pilar, projeto e plano atualizados');
+    $msg('Vínculos salvos.');
+    $back($id);
+}
+
+if (in_array($do, ['project_save', 'plan_save', 'milestone_add', 'milestone_done'], true)) {
+    $needInternal();
+    switch ($do) {
+        case 'project_save':
+            $saved = Structure::saveProject($id, $p);
+            $msg($saved ? 'Projeto salvo.' : 'Informe o nome do projeto.', (bool) $saved);
+            $saved ? $go('/front/project.php?id=' . $saved) : $go('/front/projects.php');
+            break;
+        case 'plan_save':
+            $saved = Structure::savePlan($id, $p);
+            $msg($saved ? 'Plano salvo.' : 'Informe o nome do plano.', (bool) $saved);
+            $saved ? $go('/front/plan.php?id=' . $saved) : $go('/front/projects.php');
+            break;
+        case 'milestone_add':
+            $msg(Structure::saveMilestone($id, (string) ($p['name'] ?? ''), (string) ($p['due_date'] ?? '')) ? 'Marco adicionado.' : 'Informe o nome e a data do marco.', true);
+            $go('/front/project.php?id=' . $id);
+            break;
+        case 'milestone_done':
+            $DB->update(Structure::milestonesTable(), ['is_done' => !empty($p['done']) ? 1 : 0], ['id' => (int) ($p['milestone'] ?? 0), 'mkt_projects_id' => $id]);
+            $go('/front/project.php?id=' . $id);
+            break;
+    }
 }
 
 // ================================================================== demanda

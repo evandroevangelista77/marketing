@@ -9,6 +9,7 @@ use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Note;
 use GlpiPlugin\Marketing\Settings;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Type;
 use GlpiPlugin\Marketing\Ui;
 
@@ -34,6 +35,7 @@ $canEdit = $id === 0 ? Access::canCreate() : (Access::canUpdate() || $demand->ca
 $me = (int) Session::getLoginUserID();
 $isRequester = $id > 0 && (int) ($fields['requester_users_id'] ?? 0) === $me;
 $closed = in_array($fields['status'] ?? '', [Demand::STATUS_DONE, Demand::STATUS_CANCELLED], true);
+$isInternal = $id > 0 && ($fields['origin'] ?? 'external') === Demand::ORIGIN_INTERNAL;
 $colors = Settings::statusColors();
 $types = Type::all(true);
 $users = Ui::userOptions();
@@ -45,7 +47,7 @@ Ui::header($id === 0 ? 'Nova demanda' : (string) $fields['code'], 'demands');
 echo Ui::title(
     $id === 0 ? 'Nova demanda' : $fields['code'] . ' — ' . $fields['name'],
     $id === 0 ? 'Descreva o pedido. O envio não implica aceite nem confirmação de prazo (RN-01).' : '',
-    $id > 0 ? Ui::badge(Demand::STATUSES[$fields['status']] ?? $fields['status'], $colors[$fields['status']] ?? '#94a3b8') : ''
+    $id > 0 ? Ui::originBadge((string) ($fields['origin'] ?? 'external')) . ' ' . Ui::badge(Demand::STATUSES[$fields['status']] ?? $fields['status'], $colors[$fields['status']] ?? '#94a3b8') : ''
 );
 
 // ---------------------------------------------------------------- formulário
@@ -69,7 +71,7 @@ if ($id > 0 && Access::canUpdate()) {
     echo "<div class='col-md-3'>" . $line('confirmed_date', 'Prazo confirmado', 'date') . "</div>";
     echo "<div class='col-md-3 mb-3'><label class='form-label'>Prioridade</label>" . Ui::select('priority', Demand::PRIORITIES, $fields['priority'] ?? 3) . "</div></div>";
     $missing = Demand::missingInputs($fields);
-    if ($missing && in_array($fields['status'], [Demand::STATUS_RECEIVED, Demand::STATUS_TRIAGE, Demand::STATUS_WAITING_REQUESTER], true)) {
+    if (!$isInternal && $missing && in_array($fields['status'], [Demand::STATUS_RECEIVED, Demand::STATUS_TRIAGE, Demand::STATUS_WAITING_REQUESTER], true)) {
         echo "<div class='alert alert-warning py-2'>Para planejar faltam: <b>" . $f(implode(', ', $missing)) . "</b>.</div>";
     }
 }
@@ -79,6 +81,71 @@ if ($canEdit) {
 echo "</form>";
 
 if ($id > 0) {
+    // ------------------------------------------------------------ pilar, projeto e plano de ação
+    $canLink = Access::canUpdate() || Access::canInternal();
+    $pillar = Structure::pillars()[(int) $fields['pillars_id']] ?? null;
+    $proj = Structure::projects()[(int) $fields['mkt_projects_id']] ?? null;
+    $plan = Structure::plans()[(int) $fields['plans_id']] ?? null;
+    $parent = null;
+    if ((int) $fields['parent_id'] > 0) {
+        $pd = new Demand();
+        $parent = $pd->getFromDB((int) $fields['parent_id']) ? $pd->fields : null;
+    }
+    echo "<div class='card card-body mb-3'><h4>Pilar, projeto e plano de ação</h4>";
+    echo "<div class='mb-2 small'>"
+        . ($pillar ? Ui::badge($pillar['name'], $pillar['color']) : "<span class='text-secondary'>Sem pilar</span>") . " → "
+        . ($proj ? "<a href='" . $f(Ui::url('/front/project.php?id=' . (int) $proj['id'])) . "'>" . $f($proj['name']) . "</a>" : "<span class='text-secondary'>sem projeto (avulsa)</span>") . " → "
+        . ($plan ? "<a href='" . $f(Ui::url('/front/plan.php?id=' . (int) $plan['id'])) . "'>" . $f($plan['name']) . "</a>" : "<span class='text-secondary'>sem plano</span>")
+        . ($parent ? " · subtarefa de <a href='" . $f(Ui::url('/front/demand.php?id=' . (int) $parent['id'])) . "'>" . $f($parent['code']) . "</a>" : '') . "</div>";
+    if ($canLink) {
+        $dependsOptions = [];
+        foreach ($DB->request(['SELECT' => ['id', 'code', 'name'], 'FROM' => Demand::getTable(), 'WHERE' => ['is_deleted' => 0, 'NOT' => ['id' => $id]], 'ORDER' => 'id DESC', 'LIMIT' => 300]) as $r) {
+            $dependsOptions[(int) $r['id']] = $r['code'] . ' · ' . $r['name'];
+        }
+        echo $open('link_save');
+        echo Ui::structureSelects($fields);
+        echo "<div class='row'><div class='col-md-3 mb-3'><label class='form-label'>Data inicial</label><input class='form-control' type='date' name='start_date' value='" . $f($fields['start_date'] ?? '') . "'></div>"
+            . "<div class='col-md-6 mb-3'><label class='form-label'>Depende de</label>" . Ui::select('depends_on_id', $dependsOptions, $fields['depends_on_id'] ?? 0, '', true, 'Nenhuma dependência') . "</div>"
+            . "<div class='col-md-3 mb-3 d-flex align-items-end'><button class='btn btn-outline-primary w-100'>Salvar vínculos</button></div></div></form>";
+    }
+    echo "</div>";
+
+    // ------------------------------------------------------------ plano de ação e subtarefas
+    $children = Structure::activities(['parent_id' => $id]);
+    if ($plan || $children) {
+        echo "<div class='card card-body mb-3'><h4>Atividades do plano" . ($plan ? ' · ' . $f($plan['name']) : '') . "</h4>";
+        echo "<div class='mb-2'>" . Ui::bar(Structure::progress($children)) . "</div><ul class='mkt-tree'>";
+        foreach ($children as $c) {
+            echo "<li class='d-flex flex-wrap gap-2 align-items-center'><a href='" . $f(Ui::url('/front/demand.php?id=' . (int) $c['id'])) . "'>" . $f($c['code']) . "</a><span>" . $f($c['name']) . "</span>"
+                . Ui::badge(Demand::STATUSES[$c['status']] ?? $c['status'], $colors[$c['status']] ?? '#94a3b8') . Ui::avatar((int) $c['users_id_assigned'])
+                . "<span class='text-secondary small ms-auto'>" . $f(Ui::date(Demand::deadline($c))) . "</span></li>";
+        }
+        echo "</ul>";
+        if (!$children) {
+            echo "<p class='text-secondary mb-2'>Nenhuma atividade ainda.</p>";
+        }
+        if (Access::canInternal() && !$closed) {
+            echo $open('subtask_create', 'row g-2 mt-1') . "<div class='col-md-5'><input class='form-control' name='name' placeholder='Nova atividade / subtarefa' required></div>"
+                . "<div class='col-md-3'>" . Ui::select('users_id_assigned', $users, $fields['users_id_assigned'] ?? 0, '', true, 'Sem responsável') . "</div>"
+                . "<div class='col-md-2'><input class='form-control' type='date' name='confirmed_date'></div><div class='col-md-2'><button class='btn btn-outline-primary w-100'>Adicionar</button></div></form>";
+        }
+        echo "<div class='text-secondary small mt-2'>A conclusão desta demanda só é permitida quando todas as atividades estiverem concluídas ou canceladas" . ($isInternal ? '.' : ', além da evidência e do aceite do solicitante.') . "</div></div>";
+    } elseif (Access::canInternal() && !$closed && !$isInternal
+        && !in_array($fields['status'], [Demand::STATUS_RECEIVED, Demand::STATUS_TRIAGE, Demand::STATUS_WAITING_REQUESTER], true)) {
+        // demanda aceita e planejada: pode seguir como execução simples (uma atividade) ou virar um plano de ação
+        echo "<details class='card card-body mb-3'><summary class='fw-bold'><i class='ti ti-hierarchy-2 me-1'></i>Criar plano de ação</summary>"
+            . "<p class='text-secondary small mt-2'>O plano mantém o código <b>" . $f($fields['code']) . "</b>, o briefing e as decisões desta solicitação. Use quando a entrega exigir várias atividades; para uma entrega simples, siga sem plano.</p>"
+            . $open('plan_create');
+        echo "<div class='row'><div class='col-md-6 mb-3'><label class='form-label'>Nome do plano</label><input class='form-control' name='name' value='" . $f($fields['name']) . "'></div>"
+            . "<div class='col-md-3 mb-3'><label class='form-label'>Responsável principal</label>" . Ui::select('users_id', $users, $fields['users_id_assigned'] ?? 0, '', true, 'Responsável da demanda') . "</div>"
+            . "<div class='col-md-3 mb-3'><label class='form-label'>Projeto</label>" . Ui::select('mkt_projects_id', Structure::projectOptions(), $fields['mkt_projects_id'] ?? 0, '', true, 'Sem projeto') . "</div></div>";
+        echo "<div class='row'><div class='col-md-3 mb-3'><label class='form-label'>Início</label><input class='form-control' type='date' name='start_date'></div>"
+            . "<div class='col-md-3 mb-3'><label class='form-label'>Fim previsto</label><input class='form-control' type='date' name='end_date' value='" . $f($fields['confirmed_date'] ?? '') . "'></div>"
+            . "<div class='col-md-6 mb-3'><label class='form-label'>Critérios de conclusão</label><input class='form-control' name='criteria'></div></div>";
+        echo "<div class='mb-3'><label class='form-label'>Atividades (uma por linha; opcional <code>título | AAAA-MM-DD</code> para o prazo)</label><textarea class='form-control' name='activities' rows='5' placeholder='Validar ICP e oferta | 2027-02-10&#10;Produzir peças&#10;Configurar mídia e tracking&#10;Executar QA'></textarea></div>"
+            . "<button class='btn btn-primary'>Criar plano de ação</button></form></details>";
+    }
+
     // ------------------------------------------------------------ mudança de situação (RF-007)
     if (Access::canUpdate()) {
         $next = Demand::TRANSITIONS[$fields['status']] ?? [];
@@ -118,7 +185,9 @@ if ($id > 0) {
     echo "</div>";
 
     // ------------------------------------------------------------ aceite do solicitante (RN-05)
-    if ($isRequester && !$closed && empty($fields['accepted_at'])) {
+    if ($isInternal) {
+        // atividade do Marketing não tem solicitante externo: sem aceite
+    } elseif ($isRequester && !$closed && empty($fields['accepted_at'])) {
         echo "<div class='card card-body mb-3'><h4>Aceite da entrega</h4>" . $open('accept') . "<button class='btn btn-success'>Aceitar entrega</button></form></div>";
     } elseif (!empty($fields['accepted_at'])) {
         echo "<p class='text-secondary'>Entrega aceita em " . $f(Ui::datetime($fields['accepted_at'])) . ".</p>";

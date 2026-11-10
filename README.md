@@ -5,6 +5,7 @@ Plugin de gestão de demandas, projetos e governança de Marketing. Cria a seç�
 - **Painel de Demandas**: cartões, gráficos executivos, filtros de data, gaveta lateral ao clicar e PDF executivo.
 - **Demandas**: ficha com briefing, fluxo de situações, evidências, aprovações e histórico.
 - **Quadro Kanban**: visão Kanban e visão **Tabela principal** (agrupada por mês, estilo monday).
+- **Projetos e planos**: pilar → projeto → plano de ação → atividade, com marcos e progresso. Atividades do próprio Marketing sem formulário de solicitação (direito *Cadastro interno*), e botão "Criar plano de ação" a partir de uma demanda.
 - **Configuração**: tipos de demanda, SLOs (em dias úteis), notificações, automações e pop-up de atribuição com som.
 - **Tema** diurno, noturno ou automático por usuário.
 - Aba do plugin em *Administração → Perfis* (direitos de leitura, atualização, aprovação e configuração).
@@ -31,12 +32,12 @@ Rodam no servidor do GLPI e removem o que criam:
 
 ```bash
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/gestao.php
-# também: poc.php, fase1.php, fase1b.php
+# também: estrutura.php, poc.php, fase1.php, fase1b.php
 ```
 
 ## Documentação
 
-`docs/GESTAO-DEMANDAS.md` (funcionalidades, regras, limitações), `docs/POC-Fase0.md` e `docs/Fase1-status.md`.
+`docs/GESTAO-DEMANDAS.md` (funcionalidades, regras, limitações), `docs/MATRIZ-DEVOLUTIVA-2.md` (classificação do que está entregue e do que falta), `docs/POC-Fase0.md` e `docs/Fase1-status.md`.
 
 ## Licença
 

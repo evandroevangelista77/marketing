@@ -13,7 +13,7 @@ $kernel = new Glpi\Kernel\Kernel('production');
 $kernel->boot();
 global $DB;
 
-foreach (['Base', 'Access', 'Settings', 'Type', 'Slo', 'Alert', 'Outbox', 'Notifier', 'Note', 'Automation', 'Demand', 'Dashboard', 'ReportPdf', 'ExecutiveReport', 'Ui'] as $c) {
+foreach (['Base', 'Access', 'Settings', 'Type', 'Slo', 'Alert', 'Outbox', 'Notifier', 'Note', 'Automation', 'Structure', 'Demand', 'Dashboard', 'ReportPdf', 'ExecutiveReport', 'Ui'] as $c) {
     require_once $root . '/plugins/marketing/src/' . $c . '.php';
 }
 

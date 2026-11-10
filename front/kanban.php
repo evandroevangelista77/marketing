@@ -10,6 +10,7 @@
 use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\Demand;
 use GlpiPlugin\Marketing\Settings;
+use GlpiPlugin\Marketing\Structure;
 use GlpiPlugin\Marketing\Type;
 use GlpiPlugin\Marketing\Ui;
 
@@ -32,6 +33,10 @@ if (in_array($view, ['board', 'table'], true)) {
 $mine = !empty($_GET['mine']);
 $assignee = $mine ? $me : max(0, (int) ($_GET['assignee'] ?? 0));
 $typeId = max(0, (int) ($_GET['type'] ?? 0));
+$origin = isset(Demand::ORIGINS[$_GET['origin'] ?? '']) ? $_GET['origin'] : '';
+$pillarId = max(0, (int) ($_GET['pillar'] ?? 0));
+$projectId = max(0, (int) ($_GET['project'] ?? 0));
+$projectsAll = Structure::projects();
 $showCancelled = !empty($_GET['cancelled']);
 $showDone = !empty($_GET['done']);
 $colors = Settings::statusColors();
@@ -46,6 +51,15 @@ if ($assignee > 0) {
 if ($typeId > 0) {
     $where['types_id'] = $typeId;
 }
+if ($origin !== '') {
+    $where['origin'] = $origin;
+}
+if ($pillarId > 0) {
+    $where['pillars_id'] = $pillarId;
+}
+if ($projectId > 0) {
+    $where['mkt_projects_id'] = $projectId;
+}
 $all = iterator_to_array($DB->request(['FROM' => Demand::getTable(), 'WHERE' => $where, 'ORDER' => ['priority ASC', 'id DESC']]), false);
 
 Ui::header($view === 'table' ? 'Tabela principal' : 'Quadro Kanban', 'kanban');
@@ -54,7 +68,7 @@ echo Ui::title(
     $view === 'table'
         ? 'Visão em tabela, agrupada pelo mês do prazo. Clique na situação para mudá-la; clique no nome do grupo para recolher.'
         : ($canMove ? 'Arraste um cartão para outra coluna para mudar a situação. As regras são as mesmas da ficha da demanda.' : 'Visão por situação. Seu perfil não permite mudar a situação.'),
-    Access::canCreate() ? Ui::button('Nova demanda', Ui::url('/front/demand.php?id=0')) : ''
+    (Access::canInternal() ? Ui::button('Nova atividade', Ui::url('/front/activity.php'), 'ti-building', 'btn-outline-primary') . ' ' : '') . (Access::canCreate() ? Ui::button('Nova solicitação', Ui::url('/front/demand.php?id=0')) : '')
 );
 
 // ---------------------------------------------------------------- abas das visões
@@ -65,6 +79,9 @@ echo "<nav class='mkt-viewtabs'>" . $tab('table', 'Tabela principal', 'ti-table'
 echo "<form method='get' class='card card-body mb-3'><input type='hidden' name='view' value='" . $e($view) . "'><div class='mkt-filters'>";
 echo "<div><label>Responsável</label>" . Ui::select('assignee', Ui::userOptions(), $mine ? '' : ($assignee ?: ''), '', true) . "</div>";
 echo "<div><label>Tipo</label>" . Ui::select('type', array_map(fn ($t) => $t['name'], $types), $typeId ?: '', '', true) . "</div>";
+echo "<div><label>Origem</label>" . Ui::select('origin', Demand::ORIGINS, $origin, '', true) . "</div>";
+echo "<div><label>Pilar</label>" . Ui::select('pillar', Structure::pillarOptions(false), $pillarId ?: '', '', true) . "</div>";
+echo "<div><label>Projeto</label>" . Ui::select('project', Structure::projectOptions(false), $projectId ?: '', '', true) . "</div>";
 echo "<div class='form-check mb-2'><input class='form-check-input' type='checkbox' name='mine' value='1' id='mine'" . ($mine ? ' checked' : '') . "><label class='form-check-label' for='mine'>Só minhas</label></div>";
 if ($view === 'table') {
     echo "<div class='form-check mb-2'><input class='form-check-input' type='checkbox' name='done' value='1' id='done'" . ($showDone ? ' checked' : '') . "><label class='form-check-label' for='done'>Mostrar concluídas</label></div>";
@@ -90,7 +107,7 @@ if ($view === 'board') {
             $deadline = Demand::deadline($r);
             $typeColor = (int) $r['types_id'] > 0 ? ($types[(int) $r['types_id']]['color'] ?? $c) : $c;
             echo "<article class='mkt-card" . ($late ? ' late' : '') . "' draggable='" . ($canMove ? 'true' : 'false') . "' data-id='" . (int) $r['id'] . "' style='--c:" . $e($typeColor) . "'>"
-                . "<div class='mkt-code'>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . "</div>"
+                . "<div class='mkt-code'>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . ($r['origin'] === Demand::ORIGIN_INTERNAL ? ' · interna' : '') . ((int) $r['mkt_projects_id'] > 0 ? ' · ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name'] ?? '') : '') . "</div>"
                 . "<a class='name' href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a>"
                 . "<div class='meta'><span><i class='ti ti-user'></i> " . $e((int) $r['users_id_assigned'] > 0 ? getUserName((int) $r['users_id_assigned']) : 'sem responsável') . "</span>"
                 . ($deadline ? "<span class='" . ($late ? 'text-danger fw-bold' : '') . "'><i class='ti ti-calendar'></i> " . $e(Ui::date($deadline)) . "</span>" : '')
@@ -169,7 +186,7 @@ foreach ($groups as $key => $list) {
         $tip = 'Entrada ' . Ui::date($r['sent_at'] ?: $r['date_creation']) . ' → prazo ' . ($dl ? Ui::date($dl) : 'sem prazo') . ' · progresso ' . $progress . '%';
         $stars = 6 - max(1, min(5, (int) $r['priority']));
         echo "<div class='mkt-row" . ($late ? ' late' : '') . "' data-id='" . (int) $r['id'] . "'>"
-            . "<div class='mkt-cell-name'><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a><small>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . "</small></div>"
+            . "<div class='mkt-cell-name'><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a><small>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . ($r['origin'] === Demand::ORIGIN_INTERNAL ? ' · interna' : '') . ((int) $r['mkt_projects_id'] > 0 ? ' · ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name'] ?? '') : '') . "</small></div>"
             . "<div class='mkt-cell-resp'>" . Ui::avatar((int) $r['users_id_assigned']) . "</div>"
             . "<div class='mkt-cell-st'>$status</div>"
             . "<div class='mkt-cell-tl'><div class='mkt-tl' title='" . $e($tip) . "'><span style='width:{$progress}%'></span></div></div>"

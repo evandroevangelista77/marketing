@@ -11,6 +11,11 @@ use Calendar;
  */
 class Slo
 {
+    /** Grupos de medição do debriefing (§3.5). Cada SLO é um indicador próprio: não se somam entre si. */
+    public const GROUPS = ['triage' => 'Entrada e triagem', 'execution' => 'Gestão e execução', 'fronts' => 'Frentes específicas'];
+    public const HOM_STATUSES = ['draft' => 'Em rascunho', 'review' => 'Em avaliação', 'approved' => 'Homologado'];
+    public const APPLIES = ['external' => 'Solicitações de outras áreas', 'internal' => 'Atividades do Marketing', 'all' => 'Todas'];
+
     public static function getTable($classname = null)
     {
         return 'glpi_plugin_marketing_slos';
@@ -32,14 +37,34 @@ class Slo
         global $DB;
         $to = array_values(array_intersect(array_filter(array_map('trim', explode(',', (string) ($in['to_statuses'] ?? '')))), array_keys(Demand::STATUSES)));
         $from = (string) ($in['from_status'] ?? '');
+        $date = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) ? $v : null;
+        $hom = (string) ($in['hom_status'] ?? 'draft');
+        $hom = isset(self::HOM_STATUSES[$hom]) ? $hom : 'draft';
+        $evidence = mb_substr(trim((string) ($in['hom_evidence'] ?? '')), 0, 4000);
+        $pause = array_values(array_intersect(array_map('strval', (array) ($in['pause_list'] ?? [])), array_keys(Demand::STATUSES)));
+        $group = (string) ($in['grp'] ?? '');
+        $applies = (string) ($in['applies_to'] ?? '');
+        $previous = $id > 0 ? (self::all()[$id] ?? null) : null;
+        // RF-017: o SLO só pode ficar ativo depois de homologado e com a evidência do aceite
+        $homologated = $hom === 'approved' && $evidence !== '';
         $data = [
+            'grp'                => isset(self::GROUPS[$group]) ? $group : 'triage',
+            'process'            => mb_substr(trim((string) ($in['process'] ?? '')), 0, 160),
+            'pause_statuses'     => implode(',', $pause),
+            'applies_to'         => isset(self::APPLIES[$applies]) ? $applies : 'external',
+            'hom_status'         => ($hom === 'approved' && !$homologated) ? 'review' : $hom,
+            'hom_evidence'       => $evidence,
+            'hom_users_id'       => $homologated ? ((int) ($previous['hom_users_id'] ?? 0) ?: (int) \Session::getLoginUserID()) : 0,
+            'hom_date'           => $homologated ? ($previous['hom_date'] ?? date('Y-m-d H:i:s')) : null,
+            'valid_from'         => $date($in['valid_from'] ?? null),
+            'valid_to'           => $date($in['valid_to'] ?? null),
             'name'               => mb_substr(trim((string) ($in['name'] ?? '')), 0, 160),
             'from_status'        => isset(Demand::STATUSES[$from]) ? $from : Demand::STATUS_RECEIVED,
             'to_statuses'        => implode(',', $to),
             'limit_days'         => max(1, min(365, (int) ($in['limit_days'] ?? 1))),
             'calendars_id'       => max(0, (int) ($in['calendars_id'] ?? 0)),
             'users_id_escalate'  => max(0, (int) ($in['users_id_escalate'] ?? 0)),
-            'is_active'          => !empty($in['is_active']) ? 1 : 0,
+            'is_active'          => (!empty($in['is_active']) && $homologated) ? 1 : 0,
         ];
         if ($data['name'] === '' || !$data['to_statuses']) {
             return 0;
@@ -50,6 +75,13 @@ class Slo
         }
         $DB->insert(self::getTable(), $data + ['date_creation' => date('Y-m-d H:i:s')]);
         return (int) $DB->insertId();
+    }
+
+    /** O SLO está homologado (situação "Homologado" com evidência do aceite)? */
+    public static function isHomologated(int $id): bool
+    {
+        $row = self::all()[$id] ?? null;
+        return $row && $row['hom_status'] === 'approved' && trim((string) $row['hom_evidence']) !== '';
     }
 
     /**
@@ -93,6 +125,11 @@ class Slo
         if (($demand['status'] ?? '') === Demand::STATUS_CANCELLED) {
             return $na;
         }
+        $applies = (string) ($slo['applies_to'] ?? 'external');
+        $origin = (string) ($demand['origin'] ?? 'external');
+        if ($applies !== 'all' && $applies !== $origin) {
+            return $na;
+        }
         $from = (string) $slo['from_status'];
         $targets = array_filter(explode(',', (string) $slo['to_statuses']));
 
@@ -115,8 +152,37 @@ class Slo
                 break;
             }
         }
+        // vigência: só mede quem começou a contagem dentro do período de vigência do SLO
+        if ((!empty($slo['valid_from']) && substr((string) $start, 0, 10) < $slo['valid_from']) || (!empty($slo['valid_to']) && substr((string) $start, 0, 10) > $slo['valid_to'])) {
+            return $na;
+        }
+        // situações que pausam a contagem: o tempo parado nelas empurra o vencimento
+        $pause = array_filter(explode(',', (string) ($slo['pause_statuses'] ?? '')));
+        $paused = 0;
+        if ($pause) {
+            $current = $from;
+            $since = null;
+            $limit = strtotime($end ?? $now);
+            foreach ($events as $ev) {
+                if (($ev['event'] ?? '') !== 'status' || $ev['date_creation'] < $start) {
+                    continue;
+                }
+                $t = strtotime($ev['date_creation']);
+                if ($since !== null && !in_array($ev['new_value'], $pause, true)) {
+                    $paused += max(0, min($t, $limit) - $since);
+                    $since = null;
+                }
+                if (in_array($ev['new_value'], $pause, true) && $since === null) {
+                    $since = $t;
+                }
+            }
+            if ($since !== null) {
+                $paused += max(0, $limit - $since);
+            }
+        }
         // o prazo vale até o fim do dia útil de vencimento ("até 1 dia útil" = até o fim do próximo dia útil)
-        $due = substr(self::addBusinessDays((string) $start, (int) $slo['limit_days'], (int) $slo['calendars_id']), 0, 10) . ' 23:59:59';
+        $base = $paused > 0 ? date('Y-m-d H:i:s', strtotime((string) $start) + $paused) : (string) $start;
+        $due = substr(self::addBusinessDays($base, (int) $slo['limit_days'], (int) $slo['calendars_id']), 0, 10) . ' 23:59:59';
         if ($end) {
             return ['state' => $end <= $due ? 'met' : 'breached', 'start' => $start, 'due' => $due, 'end' => $end];
         }

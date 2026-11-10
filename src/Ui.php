@@ -131,6 +131,46 @@ class Ui
         return (int) date('j', $ts) . ' ' . $m[(int) date('n', $ts)];
     }
 
+    /**
+     * Seletores encadeados Pilar → Projeto → Plano de ação. Ao escolher o pilar, o projeto e o plano mostram só os
+     * que pertencem a ele (public/js/estrutura.js). Cada um vem em uma coluna de 4/12.
+     */
+    public static function structureSelects(array $v, string $extra = ''): string
+    {
+        $pillars = Structure::pillars(true);
+        $projects = Structure::projects(true);
+        $plans = Structure::plans(0, true);
+        $h = "<div class='row mkt-structure'>";
+        $h .= "<div class='col-md-4 mb-3'><label class='form-label'>Pilar / frente</label><select class='form-select' name='pillars_id' data-lvl='pillar' $extra><option value=''>Sem pilar</option>";
+        foreach ($pillars as $id => $r) {
+            $h .= "<option value='$id'" . ((int) ($v['pillars_id'] ?? 0) === $id ? ' selected' : '') . ">" . self::e($r['name']) . "</option>";
+        }
+        $h .= "</select></div><div class='col-md-4 mb-3'><label class='form-label'>Projeto</label><select class='form-select' name='mkt_projects_id' data-lvl='project' $extra><option value=''>Sem projeto (avulsa)</option>";
+        foreach ($projects as $id => $r) {
+            $h .= "<option value='$id' data-pillar='" . (int) $r['pillars_id'] . "'" . ((int) ($v['mkt_projects_id'] ?? 0) === $id ? ' selected' : '') . ">" . self::e($r['name']) . "</option>";
+        }
+        $h .= "</select></div><div class='col-md-4 mb-3'><label class='form-label'>Plano de ação</label><select class='form-select' name='plans_id' data-lvl='plan' $extra><option value=''>Sem plano</option>";
+        foreach ($plans as $id => $r) {
+            $h .= "<option value='$id' data-project='" . (int) $r['mkt_projects_id'] . "'" . ((int) ($v['plans_id'] ?? 0) === $id ? ' selected' : '') . ">" . self::e($r['name']) . "</option>";
+        }
+        return $h . "</select></div></div>" . self::script('estrutura.js');
+    }
+
+    /** Selo da origem (Externa / Interna). */
+    public static function originBadge(string $origin): string
+    {
+        return self::badge(Demand::ORIGIN_SHORT[$origin] ?? 'Externa', Demand::ORIGIN_COLORS[$origin] ?? '#94a3b8', $origin === Demand::ORIGIN_INTERNAL ? 'ti-building' : 'ti-inbox');
+    }
+
+    /** Barra de progresso fina (0–100) para projetos e planos. */
+    public static function bar(?int $pct, string $color = '#6366f1'): string
+    {
+        if ($pct === null) {
+            return "<span class='text-secondary small'>sem atividades</span>";
+        }
+        return "<div class='mkt-pbar' title='$pct%'><span style='width:$pct%;background:" . self::e($color) . "'></span></div><span class='small text-secondary'>$pct%</span>";
+    }
+
     /** Lista de usuários ativos (id => nome) para filtros e campos. */
     public static function userOptions(): array
     {

@@ -140,6 +140,15 @@ class ExecutiveReport
         if ($f['area'] !== '') {
             $filters[] = 'Área: ' . $f['area'];
         }
+        if (($f['origin'] ?? '') !== '') {
+            $filters[] = 'Origem: ' . Demand::ORIGIN_SHORT[$f['origin']];
+        }
+        if (($f['pillar'] ?? 0) > 0) {
+            $filters[] = 'Pilar: ' . (Structure::pillars()[$f['pillar']]['name'] ?? $f['pillar']);
+        }
+        if (($f['project'] ?? 0) > 0) {
+            $filters[] = 'Projeto: ' . (Structure::projects()[$f['project']]['name'] ?? $f['project']);
+        }
         $p->SetFont('helvetica', '', 10);
         $p->SetTextColor(148, 163, 184);
         $p->SetX(20);
@@ -551,6 +560,9 @@ class ExecutiveReport
             ['Solicitante', $this->user((int) $r['requester_users_id'])], ['Responsável', $this->user((int) $r['users_id_assigned'])], ['Aprovador', $this->user((int) $r['users_id_approver'])],
             ['Enviada em', $this->datetime($r['sent_at'] ?: $r['date_creation'])], ['Prazo desejado', $this->date($r['desired_date'])], ['Prazo confirmado', $this->date($r['confirmed_date'])],
             ['Aceite', $this->datetime($r['accepted_at'])], ['Concluída em', $this->datetime($r['completed_at'])], ['Atraso', $r['overdue'] ? 'Sim' : 'Não'],
+            ['Origem', Demand::ORIGIN_SHORT[$r['origin']] ?? 'Externa'],
+            ['Pilar', (int) $r['pillars_id'] > 0 ? (Structure::pillars()[(int) $r['pillars_id']]['name'] ?? '—') : '—'],
+            ['Projeto · plano', ((int) $r['mkt_projects_id'] > 0 ? (Structure::projects()[(int) $r['mkt_projects_id']]['name'] ?? '—') : '—') . ((int) $r['plans_id'] > 0 ? ' · ' . (Structure::plans()[(int) $r['plans_id']]['name'] ?? '') : '')],
         ];
         $cw = self::W / 3;
         $p->SetFillColor(...self::LIGHT);

@@ -36,6 +36,13 @@ class Demand extends Base
         self::STATUS_CANCELLED         => 'Cancelada',
     ];
 
+    /** Origem do trabalho: pedido de outra área (formulário oficial) ou atividade do próprio Marketing (cadastro interno). */
+    public const ORIGIN_EXTERNAL = 'external';
+    public const ORIGIN_INTERNAL = 'internal';
+    public const ORIGINS = [self::ORIGIN_EXTERNAL => 'Solicitação de outra área', self::ORIGIN_INTERNAL => 'Atividade do Marketing'];
+    public const ORIGIN_SHORT = [self::ORIGIN_EXTERNAL => 'Externa', self::ORIGIN_INTERNAL => 'Interna'];
+    public const ORIGIN_COLORS = [self::ORIGIN_EXTERNAL => '#f59e0b', self::ORIGIN_INTERNAL => '#6366f1'];
+
     public const PRIORITIES = [1 => 'Muito alta', 2 => 'Alta', 3 => 'Média', 4 => 'Baixa', 5 => 'Muito baixa'];
 
     /**
@@ -152,20 +159,31 @@ class Demand extends Base
         if (!in_array($to, self::TRANSITIONS[$from] ?? [], true)) {
             return 'Transição de "' . (self::STATUSES[$from] ?? $from) . '" para "' . self::STATUSES[$to] . '" não é permitida.';
         }
+        $internal = ($fields['origin'] ?? self::ORIGIN_EXTERNAL) === self::ORIGIN_INTERNAL;
         if ($to === self::STATUS_PLANNED) {
-            $missing = self::missingInputs($fields);
+            // atividade do Marketing não passa pelo briefing do solicitante: basta ter responsável e prazo
+            $missing = $internal ? [] : self::missingInputs($fields);
             if ($missing) {
                 return 'Briefing incompleto: ' . implode(', ', $missing) . '. Solicite o complemento ao solicitante (RF-004).';
             }
             if ((int) ($fields['users_id_assigned'] ?? 0) <= 0) {
                 return 'Defina o responsável antes de planejar (RF-008).';
             }
+            if ($internal && empty($fields['confirmed_date'])) {
+                return 'Informe o prazo da atividade antes de planejar.';
+            }
+        }
+        if ($to === self::STATUS_IN_PROGRESS && ($fields['dependency_open'] ?? '') !== '') {
+            return 'Esta atividade depende de ' . $fields['dependency_open'] . ', que ainda não foi concluída.';
         }
         if ($to === self::STATUS_IN_APPROVAL && (int) ($fields['users_id_approver'] ?? 0) <= 0) {
             return 'Defina o aprovador antes de enviar para aprovação (RF-013).';
         }
-        if ($to === self::STATUS_DONE && trim((string) ($fields['exception_note'] ?? '')) === '') {
-            // RN-05: concluir exige evidência e aceite; a exceção exige justificativa e permissão de aprovação
+        if ($to === self::STATUS_DONE && (int) ($fields['open_children'] ?? 0) > 0 && trim((string) ($fields['exception_note'] ?? '')) === '') {
+            return 'Ainda há ' . (int) $fields['open_children'] . ' atividade(s) em aberto no plano desta demanda. Conclua ou cancele as atividades antes (ou justifique a exceção).';
+        }
+        if ($to === self::STATUS_DONE && !$internal && trim((string) ($fields['exception_note'] ?? '')) === '') {
+            // RN-05 (vale para solicitações externas; atividade interna não tem solicitante para aceitar): concluir exige evidência e aceite; a exceção exige justificativa e permissão de aprovação
             $missing = [];
             if ((int) ($fields['evidence_count'] ?? 0) <= 0) {
                 $missing[] = 'evidência';
@@ -231,7 +249,7 @@ class Demand extends Base
     /** Chamado depois de criar a demanda: responsável padrão da triagem e automações de criação. */
     public function afterCreate(): void
     {
-        $default = (int) Settings::get('default_triage_user', '0');
+        $default = $this->isInternal() ? 0 : (int) Settings::get('default_triage_user', '0');
         if ($default > 0 && (int) ($this->fields['users_id_assigned'] ?? 0) === 0) {
             $this->assign($default);
         }
@@ -399,6 +417,74 @@ class Demand extends Base
     public function ruleContext(): array
     {
         $count = countElementsInTable(self::getEvidencesTable(), ['demands_id' => (int) $this->getID()]);
-        return $this->fields + ['evidence_count' => $count];
+        $open = countElementsInTable(self::getTable(), ['parent_id' => (int) $this->getID(), 'is_deleted' => 0, 'NOT' => ['status' => [self::STATUS_DONE, self::STATUS_CANCELLED]]]);
+        $dependency = '';
+        if ((int) ($this->fields['depends_on_id'] ?? 0) > 0) {
+            $dep = new self();
+            if ($dep->getFromDB((int) $this->fields['depends_on_id']) && self::isOpen($dep->fields)) {
+                $dependency = $dep->fields['code'] . ' · ' . $dep->fields['name'];
+            }
+        }
+        return $this->fields + ['evidence_count' => $count, 'open_children' => $open, 'dependency_open' => $dependency];
+    }
+
+    public function isInternal(): bool
+    {
+        return ($this->fields['origin'] ?? self::ORIGIN_EXTERNAL) === self::ORIGIN_INTERNAL;
+    }
+
+    /**
+     * Cadastra uma atividade do Marketing (origem interna), sem formulário de solicitação. Nasce "Planejada" quando já tem
+     * responsável e prazo; senão fica "Em triagem" (rascunho) até completar. Devolve o id, ou 0 se faltar o título.
+     *
+     * @param array<string, mixed> $in name, objective, deliverable, users_id_assigned, start_date, confirmed_date, priority,
+     *                                 types_id, pillars_id, mkt_projects_id, plans_id, parent_id, depends_on_id
+     */
+    public static function createActivity(array $in): int
+    {
+        global $DB;
+        $name = mb_substr(trim((string) ($in['name'] ?? '')), 0, 255);
+        if ($name === '') {
+            return 0;
+        }
+        $date = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) ? $v : null;
+        [$pillar, $project, $plan] = Structure::normalizeLinks((int) ($in['pillars_id'] ?? 0), (int) ($in['mkt_projects_id'] ?? 0), (int) ($in['plans_id'] ?? 0));
+        $assignee = max(0, (int) ($in['users_id_assigned'] ?? 0));
+        $due = $date($in['confirmed_date'] ?? null);
+        $typeId = (int) ($in['types_id'] ?? 0);
+        $demand = new self();
+        $newId = $demand->add([
+            'name'               => $name,
+            'code'               => 'ATV-' . strtoupper(bin2hex(random_bytes(6))), // provisório: o código final usa o id gravado
+            'entities_id'        => (int) ($_SESSION['glpiactive_entity'] ?? 0),
+            'origin'             => self::ORIGIN_INTERNAL,
+            'requester_users_id' => (int) Session::getLoginUserID(),
+            'types_id'           => Type::find($typeId) ? $typeId : 0,
+            'objective'          => mb_substr(trim((string) ($in['objective'] ?? '')), 0, 4000),
+            'deliverable'        => mb_substr(trim((string) ($in['deliverable'] ?? '')), 0, 4000),
+            'area'               => 'Marketing',
+            'start_date'         => $date($in['start_date'] ?? null),
+            'desired_date'       => $due,
+            'confirmed_date'     => $due,
+            'priority'           => max(1, min(5, (int) ($in['priority'] ?? 3))),
+            'pillars_id'         => $pillar,
+            'mkt_projects_id'    => $project,
+            'plans_id'           => $plan,
+            'parent_id'          => max(0, (int) ($in['parent_id'] ?? 0)),
+            'depends_on_id'      => max(0, (int) ($in['depends_on_id'] ?? 0)),
+            'status'             => ($assignee > 0 && $due !== null) ? self::STATUS_PLANNED : self::STATUS_TRIAGE,
+            'sent_at'            => date('Y-m-d H:i:s'),
+        ]);
+        if (!$newId) {
+            return 0;
+        }
+        $DB->update(self::getTable(), ['code' => 'ATV-' . str_pad((string) $newId, 5, '0', STR_PAD_LEFT)], ['id' => (int) $newId]);
+        $demand->getFromDB((int) $newId);
+        $demand->addEvent('created', '', (string) $demand->fields['status'], 'Atividade cadastrada pelo Marketing');
+        if ($assignee > 0) {
+            $demand->assign($assignee);
+        }
+        Automation::fire('created', $demand->fields, ['value' => (string) $typeId]);
+        return (int) $newId;
     }
 }
