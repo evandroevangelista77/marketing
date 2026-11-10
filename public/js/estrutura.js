@@ -36,6 +36,9 @@
             }
             refresh();
         });
+        // abrir já com projeto (ou plano) escolhido: o pilar acompanha
+        const po = project.selectedOptions[0];
+        if (!pillar.value && po && po.dataset.pillar && po.dataset.pillar !== '0') pillar.value = po.dataset.pillar;
         refresh();
     });
 })();

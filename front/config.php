@@ -130,7 +130,7 @@ if ($tab === 'slos') {
             . "<div class='col-md-3'><label class='form-label'>Calendário (feriados)</label>" . Ui::select('calendars_id', $calendars, $s['calendars_id'] ?? 0, '', true, 'Seg–sex') . "</div>"
             . "<div class='col-md-3'><label class='form-label'>Vale para</label>" . Ui::select('applies_to', Slo::APPLIES, $s['applies_to'] ?? 'external') . "</div>"
             . "<div class='col-md-4'><label class='form-label'>Escalonar para</label>" . Ui::select('users_id_escalate', $users, $s['users_id_escalate'] ?? 0, '', true, 'Ninguém') . "</div>"
-            . "<div class='col-md-12'><div class='small fw-bold'>Situações que pausam a contagem (o tempo parado nelas empurra o vencimento)</div>$pauseBoxes</div>"
+            . "<div class='col-md-12'><div class='small fw-bold'>Situações que pausam a contagem (o tempo parado nelas empurra o vencimento)</div><div class='d-flex flex-wrap'>$pauseBoxes</div></div>"
             . "<div class='col-md-2'><label class='form-label'>Vigência: de</label><input class='form-control' type='date' name='valid_from' value='" . $e($s['valid_from'] ?? '') . "'></div>"
             . "<div class='col-md-2'><label class='form-label'>até</label><input class='form-control' type='date' name='valid_to' value='" . $e($s['valid_to'] ?? '') . "'></div>"
             . "<div class='col-md-3'><label class='form-label'>Homologação</label>" . Ui::select('hom_status', Slo::HOM_STATUSES, $s['hom_status'] ?? 'draft') . "</div>"
