@@ -1,0 +1,18 @@
+/* Pop-up de avisos no canto inferior direito (carregado em todas as páginas do GLPI) */
+.mkt-toasts { position: fixed; right: 1rem; bottom: 1rem; z-index: 2000; display: flex; flex-direction: column; gap: .6rem; width: 340px; max-width: calc(100vw - 2rem); pointer-events: none; }
+.mkt-toast { pointer-events: auto; display: flex; gap: .7rem; align-items: flex-start; padding: .8rem .9rem; border-radius: .75rem; background: var(--tblr-bg-surface, #fff); color: var(--tblr-body-color, #1e293b);
+    border: 1px solid var(--tblr-border-color, #e2e8f0); border-left: 5px solid #6366f1; box-shadow: 0 14px 34px rgba(15, 23, 42, .28);
+    transform: translateX(120%); opacity: 0; transition: transform .35s cubic-bezier(.2, .8, .2, 1), opacity .25s; }
+.mkt-toast.in { transform: none; opacity: 1; }
+.mkt-toast.out { transform: translateX(120%); opacity: 0; }
+.mkt-toast-icon { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; color: #6366f1;
+    background: color-mix(in srgb, #6366f1 16%, transparent); animation: mkt-ring 1.2s ease-in-out 2; }
+.mkt-toast-body { flex: 1; min-width: 0; }
+.mkt-toast-title { font-weight: 700; font-size: .92rem; }
+.mkt-toast-msg { font-size: .82rem; color: var(--tblr-secondary-color, #64748b); overflow-wrap: anywhere; }
+.mkt-toast-link { display: inline-block; margin-top: .3rem; font-size: .8rem; font-weight: 700; }
+.mkt-toast-tools { display: flex; flex-direction: column; gap: .15rem; }
+.mkt-toast-tools button { border: 0; background: transparent; color: var(--tblr-secondary-color, #64748b); padding: .1rem .25rem; border-radius: .3rem; line-height: 1; cursor: pointer; }
+.mkt-toast-tools button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+@keyframes mkt-ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-14deg); } 40% { transform: rotate(12deg); } 60% { transform: rotate(-8deg); } 80% { transform: rotate(5deg); } }
+@media (prefers-reduced-motion: reduce) { .mkt-toast, .mkt-toast-icon { transition: none; animation: none; } }
