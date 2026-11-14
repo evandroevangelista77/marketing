@@ -47,10 +47,14 @@ if ($pillarId > 0) {
 if ($projectId > 0) {
     $where['mkt_projects_id'] = $projectId;
 }
+if (!empty($_GET['postponed'])) {
+    $where['is_postponed'] = 1;
+}
 if ($q !== '') {
     $like = '%' . $q . '%';
     $where[] = ['OR' => [['name' => ['LIKE', $like]], ['code' => ['LIKE', $like]], ['objective' => ['LIKE', $like]]]];
 }
+$where = Demand::restrict($where);
 $total = countElementsInTable(Demand::getTable(), $where);
 $rows = iterator_to_array($DB->request([
     'FROM'   => Demand::getTable(),
@@ -79,6 +83,7 @@ echo "<div><label>Situação</label>" . Ui::select('status', Demand::STATUSES, $
 echo "<div><label>Tipo</label>" . Ui::select('type', array_map(fn ($t) => $t['name'], $types), $typeId ?: '', '', true) . "</div>";
 echo "<div><label>Responsável</label>" . Ui::select('assignee', Ui::userOptions(), $mine ? '' : ($assignee ?: ''), '', true) . "</div>";
 echo "<div class='form-check mb-2'><input class='form-check-input' type='checkbox' name='mine' value='1' id='mine'" . ($mine ? ' checked' : '') . "><label class='form-check-label' for='mine'>Só minhas</label></div>";
+echo "<div class='form-check mb-2'><input class='form-check-input' type='checkbox' name='postponed' value='1' id='postponed'" . (!empty($_GET['postponed']) ? ' checked' : '') . "><label class='form-check-label' for='postponed'>Só adiadas</label></div>";
 echo "<div><button class='btn btn-primary'><i class='ti ti-search me-1'></i>Filtrar</button></div></div></form>";
 
 echo "<div class='card'><div class='card-header'><h3 class='card-title'>$total demanda(s)</h3></div>";
@@ -91,7 +96,7 @@ foreach ($rows as $r) {
     $url = Ui::url('/front/demand.php?id=' . (int) $r['id']);
     $late = Demand::isOverdue($r, $today) ? " <span class='text-danger small fw-bold'>atrasada</span>" : '';
     echo "<tr><td><a href='" . $e($url) . "'>" . $e($r['code']) . "</a></td>"
-        . "<td>" . $e($r['name']) . $late . "</td>"
+        . "<td>" . $e($r['name']) . $late . Ui::postponedBadge($r) . "</td>"
         . "<td>" . Ui::originBadge((string) $r['origin']) . "</td>"
         . "<td class='small'>" . ((int) $r['pillars_id'] > 0 && isset($pillars[(int) $r['pillars_id']]) ? Ui::badge($pillars[(int) $r['pillars_id']]['name'], $pillars[(int) $r['pillars_id']]['color']) : '') . ((int) $r['mkt_projects_id'] > 0 && isset($projectsAll[(int) $r['mkt_projects_id']]) ? ' ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name']) : ((int) $r['pillars_id'] > 0 ? '' : '—')) . "</td>"
         . "<td>" . ((int) $r['types_id'] > 0 ? Ui::badge($types[(int) $r['types_id']]['name'] ?? '—', $types[(int) $r['types_id']]['color'] ?? '#94a3b8') : '—') . "</td>"
@@ -104,7 +109,7 @@ echo "</tbody></table></div>";
 
 $pages = max(1, (int) ceil($total / $perPage));
 if ($pages > 1) {
-    $qs = http_build_query(array_filter(['q' => $q, 'status' => $status, 'type' => $typeId ?: '', 'origin' => $origin, 'pillar' => $pillarId ?: '', 'project' => $projectId ?: '', 'assignee' => $mine ? '' : ($assignee ?: ''), 'mine' => $mine ? 1 : '']));
+    $qs = http_build_query(array_filter(['q' => $q, 'status' => $status, 'type' => $typeId ?: '', 'origin' => $origin, 'pillar' => $pillarId ?: '', 'project' => $projectId ?: '', 'assignee' => $mine ? '' : ($assignee ?: ''), 'mine' => $mine ? 1 : '', 'postponed' => !empty($_GET['postponed']) ? 1 : '']));
     echo "<div class='card-footer d-flex gap-2 flex-wrap'>";
     for ($i = 1; $i <= $pages; $i++) {
         echo "<a class='btn btn-sm " . ($i === $page ? 'btn-primary' : 'btn-outline-secondary') . "' href='?page=$i" . ($qs ? '&' . $e($qs) : '') . "'>$i</a>";

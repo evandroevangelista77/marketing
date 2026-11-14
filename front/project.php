@@ -34,7 +34,7 @@ $open = fn (string $do, int $rid = 0, string $cls = '') => "<form method='post' 
 Ui::header($project['name'], 'projects');
 echo Ui::title($project['name'], 'Projeto' . ($pillar ? ' do pilar ' . $pillar['name'] : ' sem pilar'), Ui::button('Projetos e planos', Ui::url('/front/projects.php'), 'ti-arrow-left', 'btn-outline-secondary'));
 
-echo "<div class='card card-body mb-3'><div class='d-flex flex-wrap gap-4 align-items-center'><div><div class='text-secondary small'>Progresso</div>" . Ui::bar(Structure::progress($acts), $pillar['color'] ?? '#6366f1') . "</div>"
+echo "<div class='card card-body mb-3'><div class='d-flex flex-wrap gap-4 align-items-center'>" . Ui::metrics($acts, $project['start_date'], $project['end_date'])
     . "<div><div class='text-secondary small'>Responsável</div>" . Ui::avatar((int) $project['users_id']) . "</div>"
     . "<div><div class='text-secondary small'>Período</div>" . $e(Ui::date($project['start_date']) . ' a ' . Ui::date($project['end_date'])) . "</div>"
     . "<div><div class='text-secondary small'>Situação</div>" . $e(Structure::PROJECT_STATUSES[$project['status']] ?? '') . ($project['is_archived'] ? ' (arquivado)' : '') . "</div>"
@@ -97,7 +97,7 @@ if (!$acts) {
     echo "<tr><td colspan='7' class='text-center text-secondary'>Nenhuma atividade vinculada.</td></tr>";
 }
 foreach ($acts as $a) {
-    echo "<tr><td><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $a['id'])) . "'>" . $e($a['code']) . "</a></td><td>" . $e($a['name']) . (Demand::isOverdue($a) ? " <span class='text-danger small fw-bold'>atrasada</span>" : '') . "</td>"
+    echo "<tr><td><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $a['id'])) . "'>" . $e($a['code']) . "</a></td><td>" . $e($a['name']) . (Demand::isOverdue($a) ? " <span class='text-danger small fw-bold'>atrasada</span>" : '') . Ui::postponedBadge($a) . "</td>"
         . "<td>" . Ui::originBadge((string) $a['origin']) . "</td><td class='small'>" . $e((int) $a['plans_id'] > 0 ? (Structure::plans()[(int) $a['plans_id']]['name'] ?? '—') : '—') . "</td>"
         . "<td>" . Ui::badge(Demand::STATUSES[$a['status']] ?? $a['status'], $colors[$a['status']] ?? '#94a3b8') . "</td><td>" . Ui::avatar((int) $a['users_id_assigned']) . "</td><td>" . $e(Ui::date(Demand::deadline($a))) . "</td></tr>";
 }

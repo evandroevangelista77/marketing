@@ -1,8 +1,8 @@
 <?php
 
 /**
- * Salva a preferência do usuário: tema (auto, light, dark) das páginas do plugin e visão do Kanban (board, table).
- * Chamado por public/js/theme.js e public/js/tabela.js. O CSRF é validado pelo GLPI (cabeçalho X-Glpi-Csrf-Token no 11).
+ * Salva a preferência do usuário: visão do Kanban (board, table).
+ * Chamado por public/js/tabela.js. O CSRF é validado pelo GLPI (cabeçalho X-Glpi-Csrf-Token no 11).
  */
 
 use GlpiPlugin\Marketing\Access;
@@ -25,9 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $key = (string) ($_POST['key'] ?? '');
 $value = (string) ($_POST['value'] ?? '');
-if ($key === 'theme' && in_array($value, Settings::THEMES, true)) {
-    Settings::setUserPref($uid, 'theme', $value);
-} elseif ($key === 'kanban_view' && in_array($value, ['board', 'table'], true)) {
+if ($key === 'kanban_view' && in_array($value, ['board', 'table'], true)) {
     Settings::setUserPref($uid, 'kanban_view', $value);
 } else {
     http_response_code(422);

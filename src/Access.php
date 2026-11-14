@@ -12,12 +12,14 @@ use Session;
  *   APPROVE   registrar decisão de aprovação e concluir com exceção;
  *   CONFIGURE tipos, SLOs, notificações e automações (perfil Administrador);
  *   INTERNAL  cadastro interno do Marketing: atividades, projetos e planos de ação, sem o formulário de solicitação.
+ *   VIEW_ALL  ver todas as demandas; sem este bit o usuário vê só as que pediu, as que executa/aprova e as dos seus projetos e planos.
  */
 class Access extends Base
 {
     public const APPROVE = 1024;
     public const CONFIGURE = 2048;
     public const INTERNAL = 4096;
+    public const VIEW_ALL = 8192;
 
     public static function getTypeName($nb = 0)
     {
@@ -67,6 +69,12 @@ class Access extends Base
         return Session::haveRight(self::$rightname, self::INTERNAL);
     }
 
+    /** Bit "Ver todas as demandas" (CA-07). Sem ele a lista é restrita pela regra de Demand::visibleCriteria(). */
+    public static function canViewAll(): bool
+    {
+        return Session::haveRight(self::$rightname, self::VIEW_ALL);
+    }
+
     private static function page(string $path): string
     {
         return '/plugins/marketing' . $path;
@@ -86,6 +94,9 @@ class Access extends Base
                 'links' => self::canInternal() ? ['add' => self::page('/front/activity.php')] : []],
             'kanban'    => ['title' => 'Quadro Kanban', 'page' => self::page('/front/kanban.php'), 'icon' => 'ti ti-layout-kanban'],
         ];
+        if (self::canInternal()) {
+            $items['import'] = ['title' => 'Importar planilha', 'page' => self::page('/front/import.php'), 'icon' => 'ti ti-file-import'];
+        }
         if (self::canConfigure()) {
             $items['config'] = ['title' => 'Configurações', 'page' => self::page('/front/config.php'), 'icon' => 'ti ti-settings'];
         }

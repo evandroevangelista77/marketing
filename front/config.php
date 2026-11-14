@@ -55,6 +55,14 @@ if ($tab === 'demandas') {
     $inner .= "</div><div class='mb-2' style='max-width:340px'><label class='form-label fw-bold'>Responsável padrão da triagem</label>"
         . Ui::select('default_triage_user', $users, Settings::get('default_triage_user', '0'), '', true, 'Ninguém (atribuição manual)')
         . "<div class='text-secondary small mt-1'>Toda demanda nova é atribuída a esta pessoa, que recebe o pop-up.</div></div>";
+    $mgr = Settings::managers();
+    $mgrOpts = '';
+    foreach ($users as $uid => $uname) {
+        $mgrOpts .= "<option value='" . (int) $uid . "'" . (in_array((int) $uid, $mgr, true) ? ' selected' : '') . ">" . $e($uname) . "</option>";
+    }
+    $inner .= "<div class='mb-2' style='max-width:460px'><label class='form-label fw-bold'>Gerência (avisada nas reprogramações de prazo)</label>"
+        . "<select class='form-select' name='managers[]' multiple size='6'>$mgrOpts</select>"
+        . "<div class='text-secondary small mt-1'>Segure Ctrl (ou Cmd) para marcar mais de uma pessoa. Sem ninguém marcado, o aviso vai ao aprovador da demanda e ao responsável pelo projeto. O canal (pop-up e e-mail) é definido em Notificações, evento \"Prazo reprogramado\".</div></div>";
     echo "<div class='card card-body mb-3'><h3 class='card-title'>Briefing</h3>" . $form('cfg_demands', $inner) . "</div>";
 
     echo "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>Tipos de demanda</h3></div><div class='table-responsive'><table class='table card-table'>";

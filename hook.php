@@ -24,6 +24,7 @@ function plugin_marketing_tables(): array
         Demand::getTable(), Demand::getEventsTable(), Demand::getEvidencesTable(), Demand::getApprovalsTable(),
         Type::getTable(), Slo::getTable(), Automation::getTable(), Alert::getTable(), Note::getTable(), Outbox::getTable(),
         Structure::pillarsTable(), Structure::projectsTable(), Structure::plansTable(), Structure::milestonesTable(),
+        Demand::reschedulesTable(), Demand::filesTable(),
     ];
 }
 
@@ -91,6 +92,13 @@ function plugin_marketing_install(): bool
     $create(Structure::milestonesTable(), "$id, `mkt_projects_id` $int, `name` varchar(160) NOT NULL, `due_date` date DEFAULT NULL, `is_done` tinyint NOT NULL DEFAULT 0,
         PRIMARY KEY (`id`), KEY `project` (`mkt_projects_id`)");
 
+    // v0.5: reprogramações de prazo (com justificativa) e entregáveis (arquivos enviados)
+    $create(Demand::reschedulesTable(), "$id, `demands_id` $int, `old_date` date DEFAULT NULL, `new_date` date DEFAULT NULL, `reason` text, `users_id` $int,
+        `date_creation` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`), KEY `demand` (`demands_id`)");
+    $create(Demand::filesTable(), "$id, `demands_id` $int, `name` varchar(200) NOT NULL, `stored_name` varchar(64) NOT NULL, `mime` varchar(100) DEFAULT NULL,
+        `size` bigint unsigned NOT NULL DEFAULT 0, `sha256` char(64) DEFAULT NULL, `comment` varchar(500) DEFAULT NULL, `users_id` $int,
+        `date_creation` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`), KEY `demand` (`demands_id`)");
+
     // colunas acrescentadas depois da primeira versão (cada uma só é criada se faltar)
     $newColumns = [
         'accepted_at'       => 'timestamp NULL DEFAULT NULL',
@@ -107,6 +115,11 @@ function plugin_marketing_install(): bool
         'parent_id'         => $int,
         'depends_on_id'     => $int,
         'start_date'        => 'date DEFAULT NULL',
+        // v0.5: percentual efetivo informado pelo responsável e marca permanente de adiamento
+        'exec_percent'      => 'tinyint DEFAULT NULL',
+        'postponed_count'   => $int,
+        'is_postponed'      => 'tinyint NOT NULL DEFAULT 0',
+        'original_date'     => 'date DEFAULT NULL',
     ];
     foreach ($newColumns as $column => $definition) {
         if (!$DB->fieldExists(Demand::getTable(), $column)) {
@@ -148,7 +161,7 @@ function plugin_marketing_install(): bool
     // direito "plugin_marketing" (aba em Perfis). Padrão: central com UPDATE = tudo; demais = leitura
     if (!countElementsInTable(ProfileRight::getTable(), ['name' => Access::$rightname])) {
         ProfileRight::addProfileRights([Access::$rightname]);
-        $all   = ALLSTANDARDRIGHT | Access::APPROVE | Access::CONFIGURE | Access::INTERNAL;
+        $all   = ALLSTANDARDRIGHT | Access::APPROVE | Access::CONFIGURE | Access::INTERNAL | Access::VIEW_ALL;
         $basic = READ;
         foreach ($DB->request(['SELECT' => ['id', 'name'], 'FROM' => Profile::getTable(), 'WHERE' => ['interface' => 'central']]) as $row) {
             $config = ProfileRight::getProfileRights($row['id'], ['config'])['config'] ?? 0;
@@ -159,6 +172,8 @@ function plugin_marketing_install(): bool
                 ['profiles_id' => $row['id'], 'name' => Access::$rightname]
             );
         }
+        // instalação nova: os bits de versões anteriores já estão definidos acima (perfis comuns ficam só com leitura e visão restrita)
+        Settings::save(['rights_internal_granted' => '1', 'rights_viewall_granted' => '1']);
     }
 
     // v0.4: bit "Cadastro interno" (4096). Quem já administrava o plugin ganha o bit uma única vez (depois o administrador pode retirar)
@@ -169,6 +184,15 @@ function plugin_marketing_install(): bool
             }
         }
         Settings::save(['rights_internal_granted' => '1']);
+    }
+
+    // v0.5: bit "Ver todas as demandas" (8192). Quem já tinha algum direito no plugin mantém a visão completa de antes uma única vez;
+    // depois o administrador pode retirar o bit dos perfis que devem ver só o que é seu (CA-07)
+    if (Settings::get('rights_viewall_granted', '0') !== '1') {
+        foreach ($DB->request(['FROM' => ProfileRight::getTable(), 'WHERE' => ['name' => Access::$rightname, 'rights' => ['>', 0]]]) as $row) {
+            $DB->update(ProfileRight::getTable(), ['rights' => (int) $row['rights'] | Access::VIEW_ALL], ['id' => $row['id']]);
+        }
+        Settings::save(['rights_viewall_granted' => '1']);
     }
 
     // sessão já aberta passa a enxergar o direito sem novo login

@@ -81,7 +81,7 @@ class Dashboard
             $where['mkt_projects_id'] = $f['project'];
         }
         $rows = [];
-        foreach ($DB->request(['FROM' => Demand::getTable(), 'WHERE' => $where, 'ORDER' => 'id DESC']) as $r) {
+        foreach ($DB->request(['FROM' => Demand::getTable(), 'WHERE' => Demand::restrict($where), 'ORDER' => 'id DESC']) as $r) {
             $rows[(int) $r['id']] = $r;
         }
         return $rows;
@@ -98,7 +98,7 @@ class Dashboard
 
         $byStatus = array_fill_keys(array_keys(Demand::STATUSES), 0);
         $byType = $byArea = $byAssignee = $weekly = [];
-        $ids = ['total' => [], 'open' => [], 'done' => [], 'overdue' => [], 'attention' => [], 'approval' => [], 'unassigned' => [], 'slo' => [], 'ontime' => [], 'late_done' => []];
+        $ids = ['total' => [], 'open' => [], 'done' => [], 'overdue' => [], 'attention' => [], 'approval' => [], 'unassigned' => [], 'slo' => [], 'ontime' => [], 'late_done' => [], 'postponed' => []];
         $days = [];
         foreach ($rows as $id => &$r) {
             $r['deadline'] = Demand::deadline($r);
@@ -147,6 +147,9 @@ class Dashboard
             }
             if ($r['overdue']) {
                 $ids['overdue'][] = $id;
+            }
+            if (!empty($r['is_postponed'])) {
+                $ids['postponed'][] = $id;
             }
             if (in_array($r['status'], [Demand::STATUS_AT_RISK, Demand::STATUS_BLOCKED], true)) {
                 $ids['attention'][] = $id;
@@ -429,6 +432,8 @@ class Dashboard
                 'lead' => 'Demandas concluídas. Conclusão exige evidência e aceite do solicitante, ou exceção justificada.'],
             'overdue'    => ['title' => 'Atrasadas', 'icon' => 'ti-alarm', 'color' => '#ef4444', 'value' => $n('overdue'), 'sub' => 'prazo vencido', 'ids' => $d['ids']['overdue'],
                 'lead' => 'Em aberto com prazo (confirmado, ou desejado enquanto não houver confirmação) anterior a hoje.'],
+            'postponed'  => ['title' => 'Adiadas', 'icon' => 'ti-calendar-pause', 'color' => '#d97706', 'value' => $n('postponed'), 'sub' => 'prazo já reprogramado', 'ids' => $d['ids']['postponed'],
+                'lead' => 'Demandas cujo prazo foi empurrado para frente ao menos uma vez (marca permanente, mesmo que o prazo volte). Cada reprogramação tem justificativa e avisa a Gerência.'],
             'attention'  => ['title' => 'Em risco ou bloqueadas', 'icon' => 'ti-alert-triangle', 'color' => '#f97316', 'value' => $n('attention'), 'sub' => 'precisam de decisão', 'ids' => $d['ids']['attention'],
                 'lead' => 'Demandas marcadas como "Em risco" ou "Bloqueada".'],
             'approval'   => ['title' => 'Aguardando aprovação', 'icon' => 'ti-signature', 'color' => '#ec4899', 'value' => $n('approval'), 'sub' => 'na fila dos aprovadores', 'ids' => $d['ids']['approval'],

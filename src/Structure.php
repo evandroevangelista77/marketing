@@ -207,12 +207,55 @@ class Structure
         return $values ? (int) round(array_sum($values) / count($values)) : null;
     }
 
+    /**
+     * Execução efetiva (0–100): média do percentual efetivo de cada atividade (Demand::effectivePercent), ignorando as canceladas.
+     * Diferente do avanço por situação (progress), que só depende de em que etapa do fluxo cada atividade está.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     */
+    public static function effective(array $rows): ?int
+    {
+        $values = [];
+        foreach ($rows as $r) {
+            $v = Demand::effectivePercent($r);
+            if ($v !== null) {
+                $values[] = $v;
+            }
+        }
+        return $values ? (int) round(array_sum($values) / count($values)) : null;
+    }
+
+    /** Quantas atividades abertas já tiveram o percentual de execução informado: [informadas, abertas]. */
+    public static function effectiveCoverage(array $rows): array
+    {
+        $open = $informed = 0;
+        foreach ($rows as $r) {
+            if (Demand::isOpen($r)) {
+                $open++;
+                $informed += ($r['exec_percent'] ?? null) !== null && $r['exec_percent'] !== '' ? 1 : 0;
+            }
+        }
+        return [$informed, $open];
+    }
+
+    /** Percentual do cronograma já decorrido (início → fim) na data $today; null sem as duas datas. */
+    public static function expected(?string $start, ?string $end, ?string $today = null): ?int
+    {
+        $s = $start ? strtotime($start) : false;
+        $e = $end ? strtotime($end) : false;
+        $t = strtotime($today ?? date('Y-m-d'));
+        if (!$s || !$e || $e <= $s) {
+            return null;
+        }
+        return (int) round(max(0, min(1, ($t - $s) / ($e - $s))) * 100);
+    }
+
     /** Demandas/atividades ligadas a um filtro (pillars_id, mkt_projects_id, plans_id ou parent_id), em ordem de prazo. */
     public static function activities(array $where): array
     {
         global $DB;
         $out = [];
-        foreach ($DB->request(['FROM' => Demand::getTable(), 'WHERE' => ['is_deleted' => 0] + $where, 'ORDER' => ['confirmed_date ASC', 'id ASC']]) as $r) {
+        foreach ($DB->request(['FROM' => Demand::getTable(), 'WHERE' => Demand::restrict(['is_deleted' => 0] + $where), 'ORDER' => ['confirmed_date ASC', 'id ASC']]) as $r) {
             $out[(int) $r['id']] = $r;
         }
         return $out;

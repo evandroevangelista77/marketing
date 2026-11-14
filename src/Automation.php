@@ -15,6 +15,7 @@ class Automation
         'status_changed'     => 'Situação alterada',
         'approval_requested' => 'Aprovação solicitada',
         'slo_breach'         => 'SLO vencido',
+        'rescheduled'        => 'Prazo reprogramado (valor: postponed ou earlier)',
     ];
 
     public const ACTIONS = [

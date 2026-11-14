@@ -70,6 +70,16 @@ Segunda devolutiva (10/11/2026): a ferramenta passou a cobrir também o trabalho
 - **Painel:** filtros por origem, pilar e projeto; cartões *Solicitações recebidas*, *Atividades internas* e *Entregas de projetos*; gráficos de origem, pilar e projetos.
 - **SLOs:** grupo, processo, aplicabilidade (externa/interna/todas), vigência, situações que pausam a contagem e **homologação**: só ligam se estiverem Homologados com a evidência do aceite.
 
+## Pendências do alinhamento de 14/11 (v0.5.0)
+
+Detalhe e situação de cada ponto em `docs/MATRIZ-DEVOLUTIVA-2.md`, seção 0. Resumo técnico:
+
+- **Reprogramação**: `Demand::reschedule()`; tabela `glpi_plugin_marketing_reschedules`; colunas `is_postponed`, `postponed_count`, `original_date`; evento de notificação `rescheduled`; Gerência em `Settings::managers()` (chave `manager_users`).
+- **Entregáveis**: tabela `glpi_plugin_marketing_files`; arquivos em `GLPI_PLUGIN_DOC_DIR/marketing/deliverables` com nome aleatório; `front/download.php` exige leitura e visibilidade da demanda.
+- **Visibilidade**: bit `Access::VIEW_ALL` (8192); `Demand::restrict()` nas consultas e `Demand::isVisible()` na ficha, nas ações e no download.
+- **Execução efetiva**: coluna `exec_percent`; `Demand::effectivePercent()`, `Structure::effective()`, `Structure::expected()` e `Ui::metrics()`.
+- **Importação**: `src/Importer.php` e `front/import.php` (xlsx via PhpSpreadsheet do GLPI, CSV nativo). Teste: `tests/pendencias.php`.
+
 ## Instalação e atualização
 
 ```bash
@@ -86,6 +96,7 @@ Atualizar: copie a pasta para `plugins/marketing`, ajuste o dono (`www-data`) e 
 ```bash
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/gestao.php   # pop-up, notificações, automações, SLOs, painel, PDF
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/estrutura.php   # origens, pilar/projeto/plano, dependências, homologação e pausa de SLO
+sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/pendencias.php   # reprogramação, entregáveis, visibilidade, execução efetiva, importação
 # também: poc.php, fase1.php, fase1b.php
 ```
 
@@ -97,6 +108,6 @@ sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/estrutu
 - A lista e o painel mostram todas as demandas da entidade para quem tem leitura (CA-07 pede restrição por atribuição para aprovadores).
 - `exception_note` fica gravada: demanda reaberta depois de concluída por exceção não reaplica a regra de evidência e aceite (RN-07).
 
-## Tema diurno e noturno
+## Aparência
 
-Todas as páginas do plugin têm o seletor **Automático / Diurno / Noturno** no canto superior direito. Diurno clareia as páginas do plugin (tira os atributos do tema escuro do GLPI no `<html>` e esconde a marca d'água); a escolha é salva por usuário (`Config` contexto `plugin:marketing:users`) e vale em qualquer computador. Arquivos: `public/js/theme.js`, `front/theme.php`, regras `html.mkt-light`/`html.mkt-dark` em `public/css/marketing.css`.
+As páginas do plugin seguem o tema (claro ou escuro) escolhido no próprio GLPI; o plugin não tem seletor de tema.

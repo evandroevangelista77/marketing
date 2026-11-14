@@ -47,7 +47,7 @@ Ui::header($id === 0 ? 'Nova demanda' : (string) $fields['code'], 'demands');
 echo Ui::title(
     $id === 0 ? 'Nova demanda' : $fields['code'] . ' — ' . $fields['name'],
     $id === 0 ? 'Descreva o pedido. O envio não implica aceite nem confirmação de prazo (RN-01).' : '',
-    $id > 0 ? Ui::originBadge((string) ($fields['origin'] ?? 'external')) . ' ' . Ui::badge(Demand::STATUSES[$fields['status']] ?? $fields['status'], $colors[$fields['status']] ?? '#94a3b8') : ''
+    $id > 0 ? Ui::originBadge((string) ($fields['origin'] ?? 'external')) . ' ' . Ui::badge(Demand::STATUSES[$fields['status']] ?? $fields['status'], $colors[$fields['status']] ?? '#94a3b8') . Ui::postponedBadge($fields) : ''
 );
 
 // ---------------------------------------------------------------- formulário
@@ -70,6 +70,9 @@ if ($id > 0 && Access::canUpdate()) {
     echo "<div class='col-md-3 mb-3'><label class='form-label'>Aprovador (RF-013)</label>" . Ui::select('users_id_approver', $users, $fields['users_id_approver'] ?? 0, '', true, 'Sem aprovador') . "</div>";
     echo "<div class='col-md-3'>" . $line('confirmed_date', 'Prazo confirmado', 'date') . "</div>";
     echo "<div class='col-md-3 mb-3'><label class='form-label'>Prioridade</label>" . Ui::select('priority', Demand::PRIORITIES, $fields['priority'] ?? 3) . "</div></div>";
+    echo "<div class='row'><div class='col-md-3 mb-3'><label class='form-label'>Execução efetiva (%)</label><input class='form-control' type='number' min='0' max='100' step='5' name='exec_percent' value='" . $f($fields['exec_percent'] ?? '') . "' placeholder='0 a 100'><div class='form-text'>Quanto do trabalho já foi feito. Concluída vale 100%.</div></div>"
+        . "<div class='col-md-9 mb-3'><label class='form-label'>Justificativa da reprogramação do prazo</label><input class='form-control' name='reschedule_reason' placeholder='Obrigatória ao trocar um prazo confirmado por outro; fica no histórico e avisa a Gerência'>"
+        . (!empty($fields['original_date']) ? "<div class='form-text'>Prazo original: <b>" . $f(Ui::date($fields['original_date'])) . "</b> · reprogramações: " . (int) $fields['postponed_count'] . "</div>" : '') . "</div></div>";
     $missing = Demand::missingInputs($fields);
     if (!$isInternal && $missing && in_array($fields['status'], [Demand::STATUS_RECEIVED, Demand::STATUS_TRIAGE, Demand::STATUS_WAITING_REQUESTER], true)) {
         echo "<div class='alert alert-warning py-2'>Para planejar faltam: <b>" . $f(implode(', ', $missing)) . "</b>.</div>";
@@ -99,7 +102,7 @@ if ($id > 0) {
         . ($parent ? " · subtarefa de <a href='" . $f(Ui::url('/front/demand.php?id=' . (int) $parent['id'])) . "'>" . $f($parent['code']) . "</a>" : '') . "</div>";
     if ($canLink) {
         $dependsOptions = [];
-        foreach ($DB->request(['SELECT' => ['id', 'code', 'name'], 'FROM' => Demand::getTable(), 'WHERE' => ['is_deleted' => 0, 'NOT' => ['id' => $id]], 'ORDER' => 'id DESC', 'LIMIT' => 300]) as $r) {
+        foreach ($DB->request(['SELECT' => ['id', 'code', 'name'], 'FROM' => Demand::getTable(), 'WHERE' => Demand::restrict(['is_deleted' => 0, 'NOT' => ['id' => $id]]), 'ORDER' => 'id DESC', 'LIMIT' => 300]) as $r) {
             $dependsOptions[(int) $r['id']] = $r['code'] . ' · ' . $r['name'];
         }
         echo $open('link_save');
@@ -163,6 +166,43 @@ if ($id > 0) {
         }
         echo "</div>";
     }
+
+    // ------------------------------------------------------------ reprogramações de prazo
+    $resched = iterator_to_array($DB->request(['FROM' => Demand::reschedulesTable(), 'WHERE' => ['demands_id' => $id], 'ORDER' => 'id DESC']), false);
+    if ($resched) {
+        echo "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>Reprogramações de prazo " . Ui::postponedBadge($fields) . "</h3></div><div class='table-responsive'><table class='table card-table'><thead><tr><th>Quando</th><th>De</th><th>Para</th><th>Quem</th><th>Justificativa</th></tr></thead><tbody>";
+        foreach ($resched as $r) {
+            $later = $r['new_date'] > $r['old_date'];
+            echo "<tr><td>" . $f(Ui::datetime($r['date_creation'])) . "</td><td>" . $f(Ui::date($r['old_date'])) . "</td><td><b class='" . ($later ? 'text-danger' : 'text-success') . "'>" . $f(Ui::date($r['new_date'])) . "</b> <span class='small text-secondary'>" . ($later ? 'adiado' : 'antecipado') . "</span></td><td>" . $f(getUserName((int) $r['users_id'])) . "</td><td>" . nl2br($f($r['reason'])) . "</td></tr>";
+        }
+        echo "</tbody></table></div></div>";
+    }
+
+    // ------------------------------------------------------------ entregáveis: envio e download
+    $files = iterator_to_array($DB->request(['FROM' => Demand::filesTable(), 'WHERE' => ['demands_id' => $id], 'ORDER' => 'id ASC']), false);
+    $canFiles = (Access::canUpdate() || Access::canInternal()) && !$closed;
+    echo "<div class='card card-body mb-3'><h4>Entregáveis (arquivos)</h4>";
+    if (!$files) {
+        echo "<p class='text-secondary'>Nenhum arquivo enviado.</p>";
+    }
+    $fmt = fn (int $b) => $b >= 1048576 ? number_format($b / 1048576, 1, ',', '.') . ' MB' : number_format(max(1, $b / 1024), 0, ',', '.') . ' KB';
+    foreach ($files as $fl) {
+        echo "<div class='d-flex flex-wrap align-items-center gap-2 py-1 border-bottom'><i class='ti ti-file'></i>"
+            . "<a href='" . $f(Ui::url('/front/download.php?id=' . (int) $fl['id'])) . "'><b>" . $f($fl['name']) . "</b></a><span class='text-secondary small'>" . $f($fmt((int) $fl['size'])) . " · " . $f(getUserName((int) $fl['users_id'])) . " · " . $f(Ui::datetime($fl['date_creation'])) . "</span>"
+            . ($fl['comment'] ? "<span class='small'>" . $f($fl['comment']) . "</span>" : '') . "<span class='text-secondary small' title='SHA-256: " . $f($fl['sha256']) . "'><i class='ti ti-fingerprint'></i></span>";
+        if ($canFiles) {
+            echo "<span class='ms-auto'>" . $open('file_remove', 'd-inline') . "<input type='hidden' name='file' value='" . (int) $fl['id'] . "'><button class='btn btn-sm btn-outline-danger' onclick=\"return confirm('Remover este entregável?')\"><i class='ti ti-trash'></i></button></form></span>";
+        }
+        echo "</div>";
+    }
+    if ($canFiles) {
+        echo "<form method='post' action='" . $f($action) . "' enctype='multipart/form-data' class='row g-2 mt-2'>" . $csrf . "<input type='hidden' name='do' value='file_upload'><input type='hidden' name='id' value='$id'>"
+            . "<div class='col-md-6'><input class='form-control' type='file' name='files[]' multiple required></div>"
+            . "<div class='col-md-4'><input class='form-control' name='comment' placeholder='Comentário (opcional)'></div>"
+            . "<div class='col-md-2'><button class='btn btn-outline-primary w-100'><i class='ti ti-upload me-1'></i>Enviar</button></div>"
+            . "<div class='form-text'>Até " . round(Demand::uploadLimit() / 1048576) . " MB por envio. Não são aceitos arquivos executáveis nem páginas (.html, .js, .php, .svg…): compacte em .zip ou registre um link em Evidências. Os arquivos contam como evidência da entrega.</div></form>";
+    }
+    echo "</div>";
 
     // ------------------------------------------------------------ evidências (RF-012)
     $evidences = iterator_to_array($DB->request(['FROM' => Demand::getEvidencesTable(), 'WHERE' => ['demands_id' => $id], 'ORDER' => 'id ASC']), false);
@@ -237,7 +277,7 @@ if ($id > 0) {
     $any = false;
     foreach ($events as $ev) {
         $any = true;
-        $shown = fn (string $v) => $ev['event'] === 'assign' ? ((int) $v > 0 ? getUserName((int) $v) : '—') : (Demand::STATUSES[$v] ?? $v);
+        $shown = fn (string $v) => $ev['event'] === 'assign' ? ((int) $v > 0 ? getUserName((int) $v) : '—') : (in_array($ev['event'], ['reschedule', 'deadline'], true) ? ($v !== '' ? Ui::date($v) : '—') : (Demand::STATUSES[$v] ?? $v));
         echo "<tr><td>" . $f(Ui::datetime($ev['date_creation'])) . "</td><td>" . $f($ev['event']) . "</td><td>" . $f($shown((string) $ev['old_value'])) . "</td>"
             . "<td>" . $f($shown((string) $ev['new_value'])) . "</td><td>" . $f(getUserName((int) $ev['users_id'])) . "</td><td>" . $f($ev['note']) . "</td></tr>";
     }

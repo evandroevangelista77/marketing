@@ -20,6 +20,7 @@ class ProfileTab extends CommonGLPI
             Access::APPROVE        => 'Aprovar',
             Access::CONFIGURE      => 'Configurar',
             Access::INTERNAL       => 'Cadastro interno',
+            Access::VIEW_ALL       => 'Ver todas as demandas',
         ];
     }
 
@@ -45,7 +46,7 @@ class ProfileTab extends CommonGLPI
             [['itemtype' => self::class, 'label' => 'Gestão de Demandas', 'field' => 'plugin_marketing']],
             ['canedit' => $canedit, 'default_class' => 'tab_bg_2', 'title' => 'Gestão de Demandas']
         );
-        echo "<div class='small text-secondary mt-2'><b>Ler</b>: vê demandas, Kanban e painel executivo. <b>Criar/Atualizar</b>: abre e triagem demandas. <b>Aprovar</b>: decide aprovações e conclui com exceção. <b>Cadastro interno</b>: cria atividades do Marketing sem formulário, projetos e planos de ação. <b>Configurar</b>: tipos, pilares, SLOs, notificações e automações.</div>";
+        echo "<div class='small text-secondary mt-2'><b>Ler</b>: vê demandas, Kanban e painel executivo. <b>Criar/Atualizar</b>: abre e triagem demandas. <b>Aprovar</b>: decide aprovações e conclui com exceção. <b>Cadastro interno</b>: cria atividades do Marketing sem formulário, projetos e planos de ação. <b>Ver todas as demandas</b>: sem este direito o usuário só enxerga o que pediu, executa ou aprova e o que pertence aos projetos e planos dos quais é responsável. <b>Configurar</b>: tipos, pilares, SLOs, notificações e automações.</div>";
         if ($canedit) {
             echo "<div class='center mt-2'><input type='hidden' name='id' value='" . (int) $item->getID() . "'>";
             echo "<button type='submit' name='update' value='1' class='btn btn-primary'>" . _x('button', 'Save') . "</button></div>";

@@ -90,6 +90,16 @@ class Demand extends Base
         return 'glpi_plugin_marketing_evidences';
     }
 
+    public static function reschedulesTable(): string
+    {
+        return 'glpi_plugin_marketing_reschedules';
+    }
+
+    public static function filesTable(): string
+    {
+        return 'glpi_plugin_marketing_files';
+    }
+
     public static function getApprovalsTable(): string
     {
         return 'glpi_plugin_marketing_approvals';
@@ -200,16 +210,85 @@ class Demand extends Base
 
     // ---------------------------------------------------------------- permissões do item
 
-    /** Item visível só com o direito do plugin e acesso à entidade (E6, CA-07). */
+    /** Item visível só com o direito do plugin, acesso à entidade e a regra de visibilidade do perfil (E6, CA-07). */
     public function canViewItem(): bool
     {
-        return Access::canView() && parent::canViewItem();
+        return Access::canView() && parent::canViewItem() && self::isVisible($this->fields);
+    }
+
+    /** @var array<int, int[]>|null responsabilidades do usuário atual: ['plans' => ids, 'projects' => ids] */
+    private static ?array $owned = null;
+
+    /** Planos e projetos de que o usuário atual é responsável (quem cuida de um plano enxerga as atividades dele). */
+    private static function owned(): array
+    {
+        global $DB;
+        if (self::$owned === null) {
+            $me = (int) Session::getLoginUserID();
+            self::$owned = ['plans' => [], 'projects' => []];
+            if ($me > 0 && $DB->tableExists(Structure::plansTable())) {
+                foreach ($DB->request(['SELECT' => ['id'], 'FROM' => Structure::plansTable(), 'WHERE' => ['users_id' => $me]]) as $r) {
+                    self::$owned['plans'][] = (int) $r['id'];
+                }
+                foreach ($DB->request(['SELECT' => ['id'], 'FROM' => Structure::projectsTable(), 'WHERE' => ['users_id' => $me]]) as $r) {
+                    self::$owned['projects'][] = (int) $r['id'];
+                }
+            }
+        }
+        return self::$owned;
+    }
+
+    /** Limpa o cache de responsabilidades (usado nos testes e depois de salvar planos e projetos). */
+    public static function resetVisibilityCache(): void
+    {
+        self::$owned = null;
+    }
+
+    /**
+     * Regra de visibilidade (CA-07). Com o direito "Ver todas as demandas" vê tudo; sem ele vê a demanda que pediu, a que executa,
+     * a que aprova e as ligadas a projetos e planos dos quais é responsável.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function isVisible(array $row): bool
+    {
+        if (Access::canViewAll()) {
+            return true;
+        }
+        $me = (int) Session::getLoginUserID();
+        if ($me <= 0) {
+            return false;
+        }
+        if ((int) ($row['requester_users_id'] ?? 0) === $me || (int) ($row['users_id_assigned'] ?? 0) === $me || (int) ($row['users_id_approver'] ?? 0) === $me) {
+            return true;
+        }
+        $own = self::owned();
+        return in_array((int) ($row['plans_id'] ?? 0), $own['plans'], true) || in_array((int) ($row['mkt_projects_id'] ?? 0), $own['projects'], true);
+    }
+
+    /** Acrescenta ao WHERE de uma consulta de demandas a restrição de visibilidade do perfil. */
+    public static function restrict(array $where): array
+    {
+        if (Access::canViewAll()) {
+            return $where;
+        }
+        $me = (int) Session::getLoginUserID();
+        $or = [['requester_users_id' => $me], ['users_id_assigned' => $me], ['users_id_approver' => $me]];
+        $own = self::owned();
+        if ($own['plans']) {
+            $or[] = ['plans_id' => $own['plans']];
+        }
+        if ($own['projects']) {
+            $or[] = ['mkt_projects_id' => $own['projects']];
+        }
+        $where[] = ['OR' => $or];
+        return $where;
     }
 
     /** Item alterável só com o direito de atualização e acesso à entidade (CA-07). */
     public function canUpdateItem(): bool
     {
-        return Access::canUpdate() && parent::canUpdateItem();
+        return Access::canUpdate() && parent::canUpdateItem() && self::isVisible($this->fields);
     }
 
     private function isRequester(): bool
@@ -416,7 +495,8 @@ class Demand extends Base
     /** Dados que as regras de transição precisam (evidências, aceite, exceção). */
     public function ruleContext(): array
     {
-        $count = countElementsInTable(self::getEvidencesTable(), ['demands_id' => (int) $this->getID()]);
+        $count = countElementsInTable(self::getEvidencesTable(), ['demands_id' => (int) $this->getID()])
+            + countElementsInTable(self::filesTable(), ['demands_id' => (int) $this->getID()]);
         $open = countElementsInTable(self::getTable(), ['parent_id' => (int) $this->getID(), 'is_deleted' => 0, 'NOT' => ['status' => [self::STATUS_DONE, self::STATUS_CANCELLED]]]);
         $dependency = '';
         if ((int) ($this->fields['depends_on_id'] ?? 0) > 0) {
@@ -426,6 +506,198 @@ class Demand extends Base
             }
         }
         return $this->fields + ['evidence_count' => $count, 'open_children' => $open, 'dependency_open' => $dependency];
+    }
+
+    // ---------------------------------------------------------------- reprogramação de prazo
+
+    /**
+     * Muda o prazo confirmado. A primeira confirmação é livre; trocar um prazo já confirmado exige justificativa, fica na trilha
+     * (tabela de reprogramações), marca a demanda como "adiada" de forma permanente quando o novo prazo é posterior e avisa a Gerência.
+     * Devolve null se feito (ou sem mudança), ou o motivo da recusa.
+     */
+    public function reschedule(string $newDate, string $reason): ?string
+    {
+        global $DB;
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $newDate) || strtotime($newDate) === false) {
+            return 'Informe uma data de prazo válida.';
+        }
+        $old = (string) ($this->fields['confirmed_date'] ?? '');
+        if ($old === $newDate) {
+            return null;
+        }
+        if (!self::isOpen($this->fields)) {
+            return 'A demanda está encerrada: o prazo não pode mais ser reprogramado.';
+        }
+        $now = date('Y-m-d H:i:s');
+        if ($old === '') {
+            $DB->update(self::getTable(), ['confirmed_date' => $newDate, 'date_mod' => $now], ['id' => (int) $this->getID()]);
+            $this->fields['confirmed_date'] = $newDate;
+            $this->addEvent('deadline', '', $newDate, 'Prazo confirmado');
+            return null;
+        }
+        $reason = trim($reason);
+        if ($reason === '') {
+            return 'Informe a justificativa para reprogramar o prazo (de ' . Ui::date($old) . ' para ' . Ui::date($newDate) . ').';
+        }
+        $postponed = $newDate > $old;
+        $set = ['confirmed_date' => $newDate, 'postponed_count' => (int) ($this->fields['postponed_count'] ?? 0) + 1, 'date_mod' => $now];
+        if (empty($this->fields['original_date'])) {
+            $set['original_date'] = $old;
+        }
+        if ($postponed) {
+            $set['is_postponed'] = 1; // marca permanente: não é desfeita mesmo que o prazo volte
+        }
+        $DB->update(self::getTable(), $set, ['id' => (int) $this->getID()]);
+        $this->fields = array_merge($this->fields, $set);
+        $DB->insert(self::reschedulesTable(), [
+            'demands_id' => (int) $this->getID(), 'old_date' => $old, 'new_date' => $newDate, 'reason' => mb_substr($reason, 0, 2000),
+            'users_id' => (int) Session::getLoginUserID(), 'date_creation' => $now,
+        ]);
+        $this->addEvent('reschedule', $old, $newDate, mb_substr($reason, 0, 500));
+        Notifier::send(
+            'rescheduled',
+            $this->fields,
+            array_merge($this->managersToNotify(), [(int) ($this->fields['users_id_assigned'] ?? 0), (int) ($this->fields['requester_users_id'] ?? 0)]),
+            $postponed ? 'Prazo adiado' : 'Prazo antecipado',
+            $this->label() . ': ' . Ui::date($old) . ' → ' . Ui::date($newDate) . '. Justificativa: ' . mb_substr($reason, 0, 200)
+        );
+        Automation::fire('rescheduled', $this->fields, ['value' => $postponed ? 'postponed' : 'earlier']);
+        return null;
+    }
+
+    /** Gerência avisada a cada reprogramação: usuários definidos em Configurações; sem ninguém definido, o aprovador e o dono do projeto. */
+    private function managersToNotify(): array
+    {
+        $list = Settings::managers();
+        if ($list) {
+            return $list;
+        }
+        $out = [(int) ($this->fields['users_id_approver'] ?? 0)];
+        $project = Structure::projects()[(int) ($this->fields['mkt_projects_id'] ?? 0)] ?? null;
+        if ($project) {
+            $out[] = (int) $project['users_id'];
+        }
+        return $out;
+    }
+
+    // ---------------------------------------------------------------- entregáveis (arquivos)
+
+    /** Extensões recusadas: arquivos executáveis ou que o navegador abriria como página. */
+    public const BLOCKED_EXTENSIONS = ['php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar', 'pht', 'sh', 'bat', 'cmd', 'com', 'exe', 'msi', 'dll', 'js', 'mjs', 'jar', 'vbs', 'ps1', 'html', 'htm', 'xhtml', 'svg', 'htaccess'];
+    public const MAX_FILE_BYTES = 26214400; // 25 MB (o limite real também depende do PHP do servidor)
+
+    /** Pasta de armazenamento dos entregáveis, fora da raiz web (pasta de documentos do GLPI). */
+    public static function filesDir(): string
+    {
+        $base = defined('GLPI_PLUGIN_DOC_DIR') ? GLPI_PLUGIN_DOC_DIR : GLPI_DOC_DIR . '/_plugins';
+        return rtrim((string) $base, '/') . '/marketing/deliverables';
+    }
+
+    /** Limite efetivo de envio em bytes (o menor entre o do plugin e o do PHP). */
+    public static function uploadLimit(): int
+    {
+        $php = static function (string $v): int {
+            $n = (int) $v;
+            return match (strtolower(substr(trim($v), -1))) {
+                'g' => $n * 1073741824, 'm' => $n * 1048576, 'k' => $n * 1024, default => $n,
+            };
+        };
+        $limits = array_filter([self::MAX_FILE_BYTES, $php((string) ini_get('upload_max_filesize')), $php((string) ini_get('post_max_size'))]);
+        return $limits ? min($limits) : self::MAX_FILE_BYTES;
+    }
+
+    /** Nome de arquivo seguro para exibir e baixar. */
+    public static function cleanFileName(string $name): string
+    {
+        $name = basename(str_replace('\\', '/', $name));
+        $name = preg_replace('/[\x00-\x1F\x7F"<>|*?:]+/u', '', $name) ?? '';
+        $name = trim($name, " .\t");
+        return mb_substr($name !== '' ? $name : 'arquivo', 0, 180);
+    }
+
+    /**
+     * Guarda um arquivo enviado como entregável. $file segue o formato de $_FILES. $trusted só vale nos testes (arquivo que não veio de upload).
+     * Devolve null se guardou, ou o motivo da recusa.
+     */
+    public function addFile(array $file, string $comment = '', bool $trusted = false): ?string
+    {
+        global $DB;
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+            return 'Escolha o arquivo.';
+        }
+        if (($file['error'] ?? 0) !== UPLOAD_ERR_OK) {
+            return in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)
+                ? 'Arquivo maior que o limite do servidor (' . round(self::uploadLimit() / 1048576) . ' MB).' : 'Não foi possível receber o arquivo.';
+        }
+        $tmp = (string) ($file['tmp_name'] ?? '');
+        if ($tmp === '' || !is_file($tmp) || (!$trusted && !is_uploaded_file($tmp))) {
+            return 'Envio inválido.';
+        }
+        $size = (int) filesize($tmp);
+        if ($size <= 0) {
+            return 'O arquivo está vazio.';
+        }
+        if ($size > self::uploadLimit()) {
+            return 'Arquivo maior que o limite de ' . round(self::uploadLimit() / 1048576) . ' MB.';
+        }
+        $name = self::cleanFileName((string) ($file['name'] ?? ''));
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        if (in_array($ext, self::BLOCKED_EXTENSIONS, true) || str_starts_with($name, '.')) {
+            return 'Tipo de arquivo não permitido (.' . $ext . '). Compacte em .zip ou envie um link.';
+        }
+        $dir = self::filesDir();
+        if (!is_dir($dir) && !@mkdir($dir, 0770, true) && !is_dir($dir)) {
+            return 'Não foi possível criar a pasta de entregáveis.';
+        }
+        $stored = bin2hex(random_bytes(16));
+        $dest = $dir . '/' . $stored;
+        $ok = $trusted ? @copy($tmp, $dest) : @move_uploaded_file($tmp, $dest);
+        if (!$ok) {
+            return 'Não foi possível gravar o arquivo.';
+        }
+        @chmod($dest, 0640);
+        $mime = function_exists('mime_content_type') ? (string) @mime_content_type($dest) : '';
+        $DB->insert(self::filesTable(), [
+            'demands_id' => (int) $this->getID(), 'name' => $name, 'stored_name' => $stored, 'mime' => mb_substr($mime, 0, 100), 'size' => $size,
+            'sha256' => hash_file('sha256', $dest), 'comment' => mb_substr(trim($comment), 0, 500), 'users_id' => (int) Session::getLoginUserID(), 'date_creation' => date('Y-m-d H:i:s'),
+        ]);
+        $this->addEvent('file', '', '', 'Entregável enviado: ' . $name);
+        return null;
+    }
+
+    /** Remove o entregável (arquivo e registro). Fica na trilha. */
+    public function removeFile(int $fileId): ?string
+    {
+        global $DB;
+        $row = $DB->request(['FROM' => self::filesTable(), 'WHERE' => ['id' => $fileId, 'demands_id' => (int) $this->getID()]])->current();
+        if (!$row) {
+            return 'Arquivo não encontrado.';
+        }
+        @unlink(self::filesDir() . '/' . $row['stored_name']);
+        $DB->delete(self::filesTable(), ['id' => $fileId]);
+        $this->addEvent('file_removed', '', '', 'Entregável removido: ' . $row['name']);
+        return null;
+    }
+
+    // ---------------------------------------------------------------- execução efetiva
+
+    /**
+     * Percentual efetivo de execução de uma atividade: 100 se concluída, o valor informado pelo responsável (0–100) enquanto aberta,
+     * ou 0 se ainda não informou. Cancelada não conta (null).
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function effectivePercent(array $row): ?int
+    {
+        $st = (string) ($row['status'] ?? '');
+        if ($st === self::STATUS_CANCELLED) {
+            return null;
+        }
+        if ($st === self::STATUS_DONE) {
+            return 100;
+        }
+        $v = $row['exec_percent'] ?? null;
+        return ($v === null || $v === '') ? 0 : max(0, min(100, (int) $v));
     }
 
     public function isInternal(): bool

@@ -50,7 +50,9 @@ if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', '
     switch ($do) {
         case 'cfg_demands':
             $fields = array_values(array_intersect((array) ($p['required'] ?? []), array_keys(Settings::BRIEFING_FIELDS)));
-            Settings::save(['required_fields' => json_encode($fields ?: ['objective', 'audience', 'deliverable', 'desired_date']), 'default_triage_user' => (string) max(0, (int) ($p['default_triage_user'] ?? 0))]);
+            Settings::save(['required_fields' => json_encode($fields ?: ['objective', 'audience', 'deliverable', 'desired_date']), 'default_triage_user' => (string) max(0, (int) ($p['default_triage_user'] ?? 0)),
+                'manager_users' => implode(',', array_values(array_unique(array_filter(array_map('intval', (array) ($p['managers'] ?? [])))))),
+            ]);
             $msg('Configurações das demandas salvas.');
             break;
         case 'cfg_status':
@@ -294,9 +296,25 @@ if ($do === 'save') {
         $input['types_id']          = Type::find($typeId) ? $typeId : 0;
         $newAssignee                = (int) ($p['users_id_assigned'] ?? 0);
     }
+    // prazo confirmado: mudar um prazo já confirmado é reprogramação (justificativa obrigatória, aviso à Gerência, marca "Adiada")
+    $newDeadline = null;
+    if (Access::canUpdate() && array_key_exists('confirmed_date', $input)) {
+        $newDeadline = (string) ($input['confirmed_date'] ?? '');
+        unset($input['confirmed_date']);
+    }
+    if (Access::canUpdate() && isset($p['exec_percent'])) {
+        $input['exec_percent'] = $p['exec_percent'] === '' ? null : max(0, min(100, (int) $p['exec_percent']));
+    }
     if ($demand->canUpdateItem()) {
         $demand->update(['id' => $id] + $input);
         $demand->getFromDB($id);
+        if ($newDeadline !== null && $newDeadline !== '') {
+            $error = $demand->reschedule($newDeadline, (string) ($p['reschedule_reason'] ?? ''));
+            if ($error) {
+                $msg($error, false);
+                $back($id);
+            }
+        }
         if ($newAssignee !== null) {
             $demand->assign($newAssignee); // grava, registra o evento, abre o pop-up de quem recebeu e roda as automações
         }
@@ -336,6 +354,137 @@ if ($do === 'evidence') {
         $msg('Evidência registrada.');
     }
     $back($id);
+}
+
+// ---- entregáveis (upload) e remoção
+if ($do === 'file_upload') {
+    if (!Access::canUpdate() && !Access::canInternal()) {
+        throw $denied();
+    }
+    $demand = $load(false);
+    if (!Demand::isOpen($demand->fields)) {
+        $msg('A demanda está encerrada: não recebe novos entregáveis.', false);
+        $back($id);
+    }
+    $count = 0;
+    $errors = [];
+    $files = $_FILES['files'] ?? null;
+    if ($files && is_array($files['name'] ?? null)) {
+        foreach (array_keys($files['name']) as $i) {
+            if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $err = $demand->addFile(['name' => $files['name'][$i], 'tmp_name' => $files['tmp_name'][$i], 'error' => $files['error'][$i], 'size' => $files['size'][$i]], (string) ($p['comment'] ?? ''));
+            $err === null ? $count++ : $errors[] = $files['name'][$i] . ': ' . $err;
+        }
+    }
+    if (!$count && !$errors) {
+        $errors[] = 'Escolha ao menos um arquivo (se ele for maior que ' . round(Demand::uploadLimit() / 1048576) . ' MB, o servidor recusa o envio).';
+    }
+    if ($count) {
+        $msg($count . ' entregável(is) enviado(s).');
+    }
+    foreach ($errors as $err) {
+        $msg($err, false);
+    }
+    $back($id);
+}
+
+if ($do === 'file_remove') {
+    if (!Access::canUpdate() && !Access::canInternal()) {
+        throw $denied();
+    }
+    $demand = $load(false);
+    $error = $demand->removeFile((int) ($p['file'] ?? 0));
+    $msg($error ?? 'Entregável removido.', $error === null);
+    $back($id);
+}
+
+// ---- edição em lote das atividades de um plano de ação (responsável, prazo, prioridade, dependência, % de execução)
+if ($do === 'plan_bulk') {
+    if (!Access::canInternal() && !Access::canUpdate()) {
+        throw $denied();
+    }
+    $plans = Structure::plans();
+    if (!isset($plans[$id])) {
+        throw $denied();
+    }
+    $reason = trim((string) ($p['reschedule_reason'] ?? ''));
+    $rows = (array) ($p['row'] ?? []);
+    $acts = Structure::activities(['plans_id' => $id]);
+    $changed = $failed = 0;
+    $errors = [];
+    foreach ($rows as $aid => $in) {
+        $aid = (int) $aid;
+        if (!isset($acts[$aid]) || !is_array($in)) {
+            continue; // só atividades do próprio plano e visíveis ao usuário
+        }
+        $d = new Demand();
+        $d->getFromDB($aid);
+        $set = [];
+        $before = $d->fields;
+        $priority = max(1, min(5, (int) ($in['priority'] ?? $d->fields['priority'])));
+        if ($priority !== (int) $d->fields['priority']) {
+            $set['priority'] = $priority;
+        }
+        $start = (string) ($in['start_date'] ?? '');
+        $start = preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) ? $start : null;
+        if ($start !== ($d->fields['start_date'] ?: null)) {
+            $set['start_date'] = $start;
+        }
+        $pct = ($in['exec_percent'] ?? '') === '' ? null : max(0, min(100, (int) $in['exec_percent']));
+        if ($pct !== (($d->fields['exec_percent'] ?? null) === null ? null : (int) $d->fields['exec_percent'])) {
+            $set['exec_percent'] = $pct;
+        }
+        $dep = (int) ($in['depends_on_id'] ?? 0);
+        // dependência só de outra atividade do plano; recusa a que fecharia um ciclo (A depende de B e B de A, direta ou indiretamente)
+        if ($dep > 0 && (!isset($acts[$dep]) || $dep === $aid)) {
+            $dep = 0;
+        }
+        if ($dep > 0) {
+            $walk = $dep;
+            $seen = [];
+            while ($walk > 0 && !isset($seen[$walk])) {
+                $seen[$walk] = true;
+                $walk = (int) (($rows[$walk]['depends_on_id'] ?? $acts[$walk]['depends_on_id'] ?? 0));
+                if ($walk === $aid) {
+                    $errors[] = $d->fields['code'] . ': a dependência criaria um ciclo e foi ignorada.';
+                    $dep = (int) $d->fields['depends_on_id'];
+                    break;
+                }
+            }
+        }
+        if ($dep !== (int) $d->fields['depends_on_id']) {
+            $set['depends_on_id'] = $dep;
+        }
+        if ($set) {
+            $set['date_mod'] = date('Y-m-d H:i:s');
+            $DB->update(Demand::getTable(), $set, ['id' => $aid]);
+            $d->getFromDB($aid);
+            $d->addEvent('bulk', '', '', 'Ajustado no plano de ação: ' . implode(', ', array_diff(array_keys($set), ['date_mod'])));
+            $changed++;
+        }
+        $assignee = max(0, (int) ($in['users_id_assigned'] ?? 0));
+        if ($assignee !== (int) $d->fields['users_id_assigned']) {
+            $d->assign($assignee);
+            $changed++;
+        }
+        $due = (string) ($in['confirmed_date'] ?? '');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $due) && $due !== (string) $d->fields['confirmed_date']) {
+            $error = $d->reschedule($due, $reason);
+            if ($error) {
+                $failed++;
+                $errors[] = $d->fields['code'] . ': ' . $error;
+            } else {
+                $changed++;
+            }
+        }
+    }
+    $msg($changed ? "Plano atualizado ($changed alteração(ões))." : 'Nenhuma alteração para salvar.', true);
+    foreach (array_slice($errors, 0, 6) as $err) {
+        $msg($err, false);
+    }
+    $go('/front/plan.php?id=' . $id);
 }
 
 if ($do === 'accept') {

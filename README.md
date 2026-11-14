@@ -7,8 +7,11 @@ Plugin de gestão de demandas, projetos e governança de Marketing. Cria a seç�
 - **Quadro Kanban**: visão Kanban e visão **Tabela principal** (agrupada por mês, estilo monday).
 - **Projetos e planos**: pilar → projeto → plano de ação → atividade, com marcos e progresso. Atividades do próprio Marketing sem formulário de solicitação (direito *Cadastro interno*), e botão "Criar plano de ação" a partir de uma demanda.
 - **Configuração**: tipos de demanda, SLOs (em dias úteis), notificações, automações e pop-up de atribuição com som.
-- **Tema** diurno, noturno ou automático por usuário.
-- Aba do plugin em *Administração → Perfis* (direitos de leitura, atualização, aprovação e configuração).
+- **Prazos**: reprogramação com justificativa, aviso à Gerência e marca permanente de demanda adiada.
+- **Entregáveis**: envio e download de arquivos na ficha, com histórico.
+- **Visibilidade por perfil** (direito *Ver todas as demandas*) e **importação de planilhas** Excel/CSV.
+- **Execução efetiva** (percentual informado) e edição em lote das atividades do plano de ação.
+- Aba do plugin em *Administração → Perfis* (direitos de leitura, atualização, aprovação, configuração, cadastro interno e ver todas as demandas).
 
 Requisitos: GLPI 11.0 a 12.0 e PHP 8.1 ou superior. Não há dados de exemplo: a instalação cria apenas os tipos, SLOs e automações padrão (SLOs e automações vêm desligados).
 

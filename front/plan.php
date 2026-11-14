@@ -38,7 +38,7 @@ Ui::header($plan['name'], 'projects');
 echo Ui::title($plan['name'], 'Plano de ação' . ($project ? ' do projeto ' . $project['name'] : ' sem projeto'),
     Ui::button($project ? 'Projeto' : 'Projetos e planos', Ui::url($project ? '/front/project.php?id=' . (int) $project['id'] : '/front/projects.php'), 'ti-arrow-left', 'btn-outline-secondary'));
 
-echo "<div class='card card-body mb-3'><div class='d-flex flex-wrap gap-4 align-items-center'><div><div class='text-secondary small'>Progresso</div>" . Ui::bar(Structure::progress($acts)) . "</div>"
+echo "<div class='card card-body mb-3'><div class='d-flex flex-wrap gap-4 align-items-center'>" . Ui::metrics($acts, $plan['start_date'], $plan['end_date'])
     . "<div><div class='text-secondary small'>Responsável</div>" . Ui::avatar((int) $plan['users_id']) . "</div>"
     . "<div><div class='text-secondary small'>Período</div>" . $e(Ui::date($plan['start_date']) . ' a ' . Ui::date($plan['end_date'])) . "</div>"
     . "<div><div class='text-secondary small'>Origem</div>" . ($source ? "<a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $source['id'])) . "'>" . $e($source['code'] . ' · ' . $source['name']) . "</a>" : 'Cadastro interno') . "</div></div>"
@@ -58,17 +58,54 @@ if ($can) {
     echo "<div class='mt-2'><button class='btn btn-primary'>Salvar plano</button></div></form></details>";
 }
 
-echo "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>Atividades</h3></div><div class='table-responsive'><table class='table card-table'><thead><tr><th>Código</th><th>Atividade</th><th>Situação</th><th>Resp.</th><th>Início</th><th>Prazo</th><th>Depende de</th></tr></thead><tbody>";
+$canBulk = Access::canInternal() || Access::canUpdate();
+$today = date('Y-m-d');
+$dependsOptions = [];
+foreach ($acts as $a) {
+    $dependsOptions[(int) $a['id']] = $a['code'] . ' · ' . mb_strimwidth($a['name'], 0, 40, '…');
+}
+$userSelect = fn (string $name, int $sel) => Ui::select($name, $users, $sel, '', true, 'Sem responsável');
+$colsHead = "<th>Código</th><th>Atividade</th><th>Situação</th><th>Responsável</th><th>Início</th><th>Prazo</th><th>Prioridade</th><th>Depende de</th><th>% exec.</th>";
+echo ($canBulk ? "<form method='post' action='" . $e($action) . "' class='mkt-bulkform'>" . Ui::csrf() . "<input type='hidden' name='do' value='plan_bulk'><input type='hidden' name='id' value='$id'>" : '')
+    . "<div class='card mb-3'><div class='card-header'><h3 class='card-title'>Atividades do plano</h3>" . ($canBulk ? "<div class='card-subtitle text-secondary small ms-3'>Edite responsável, prazo, prioridade, dependência e % de execução direto na tabela e salve de uma vez.</div>" : '') . "</div>"
+    . "<div class='table-responsive'><table class='table card-table mkt-bulk'><thead><tr>$colsHead</tr></thead><tbody>";
 if (!$acts) {
-    echo "<tr><td colspan='7' class='text-center text-secondary'>Nenhuma atividade no plano.</td></tr>";
+    echo "<tr><td colspan='9' class='text-center text-secondary'>Nenhuma atividade no plano.</td></tr>";
 }
 foreach ($acts as $a) {
-    $dep = (int) $a['depends_on_id'] > 0 ? ($acts[(int) $a['depends_on_id']]['code'] ?? '#' . (int) $a['depends_on_id']) : '—';
-    echo "<tr><td><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $a['id'])) . "'>" . $e($a['code']) . "</a></td><td>" . $e($a['name']) . (Demand::isOverdue($a) ? " <span class='text-danger small fw-bold'>atrasada</span>" : '') . "</td>"
-        . "<td>" . Ui::badge(Demand::STATUSES[$a['status']] ?? $a['status'], $colors[$a['status']] ?? '#94a3b8') . "</td><td>" . Ui::avatar((int) $a['users_id_assigned']) . "</td>"
-        . "<td>" . $e(Ui::date($a['start_date'])) . "</td><td>" . $e(Ui::date(Demand::deadline($a))) . "</td><td class='small'>" . $e($dep) . "</td></tr>";
+    $aid = (int) $a['id'];
+    $closed = in_array($a['status'], [Demand::STATUS_DONE, Demand::STATUS_CANCELLED], true);
+    $code = "<a href='" . $e(Ui::url('/front/demand.php?id=' . $aid)) . "'>" . $e($a['code']) . "</a>";
+    $nameCell = $e($a['name']) . (Demand::isOverdue($a, $today) ? " <span class='text-danger small fw-bold'>atrasada</span>" : '') . Ui::postponedBadge($a);
+    $badge = Ui::badge(Demand::STATUSES[$a['status']] ?? $a['status'], $colors[$a['status']] ?? '#94a3b8');
+    if (!$canBulk || $closed) {
+        $dep = (int) $a['depends_on_id'] > 0 ? ($acts[(int) $a['depends_on_id']]['code'] ?? '#' . (int) $a['depends_on_id']) : '—';
+        echo "<tr><td>$code</td><td>$nameCell</td><td>$badge</td><td>" . Ui::avatar((int) $a['users_id_assigned']) . "</td><td>" . $e(Ui::date($a['start_date'])) . "</td><td>" . $e(Ui::date(Demand::deadline($a))) . "</td>"
+            . "<td>" . $e(Demand::PRIORITIES[(int) $a['priority']] ?? '') . "</td><td class='small'>" . $e($dep) . "</td><td>" . ($closed && $a['status'] === Demand::STATUS_DONE ? '100%' : ($a['exec_percent'] !== null ? (int) $a['exec_percent'] . '%' : '—')) . "</td></tr>";
+        continue;
+    }
+    $n = "row[$aid]";
+    $deps = $dependsOptions;
+    unset($deps[$aid]);
+    echo "<tr data-id='$aid'><td>$code</td><td>$nameCell</td><td>$badge</td>"
+        . "<td>" . $userSelect($n . '[users_id_assigned]', (int) $a['users_id_assigned']) . "</td>"
+        . "<td><input class='form-control w-date' type='date' name='{$n}[start_date]' value='" . $e($a['start_date']) . "'></td>"
+        . "<td><input class='form-control w-date' type='date' name='{$n}[confirmed_date]' value='" . $e($a['confirmed_date']) . "' data-orig='" . $e($a['confirmed_date']) . "'></td>"
+        . "<td>" . Ui::select($n . '[priority]', Demand::PRIORITIES, (int) $a['priority']) . "</td>"
+        . "<td>" . Ui::select($n . '[depends_on_id]', $deps, (int) $a['depends_on_id'], '', true, '—') . "</td>"
+        . "<td><input class='form-control w-pct' type='number' min='0' max='100' step='5' name='{$n}[exec_percent]' value='" . $e($a['exec_percent']) . "'></td></tr>";
 }
-echo "</tbody></table></div></div>";
+echo "</tbody></table></div>";
+if ($canBulk && $acts) {
+    echo "<div class='card-footer d-flex flex-wrap gap-3 align-items-end'><div class='flex-grow-1' style='min-width:260px'><label class='form-label mb-1'>Justificativa (obrigatória se algum prazo já confirmado for trocado)</label><input class='form-control' name='reschedule_reason' id='bulk-reason' placeholder='Ex.: dependência de fornecedor atrasou a entrega'></div>"
+        . "<button class='btn btn-primary'><i class='ti ti-device-floppy me-1'></i>Salvar alterações do plano</button></div>";
+}
+echo "</div>" . ($canBulk ? "</form>" : '');
+if ($canBulk) {
+    echo "<script>(function(){var f=document.querySelector('.mkt-bulkform');if(!f)return;var r=document.getElementById('bulk-reason');"
+        . "function chk(){var need=false;f.querySelectorAll('input[data-orig]').forEach(function(i){if(i.dataset.orig&&i.value&&i.value!==i.dataset.orig)need=true;});if(r){r.required=need;r.classList.toggle('is-invalid',need&&!r.value);}}"
+        . "f.addEventListener('change',function(ev){var tr=ev.target.closest('tr');if(tr)tr.classList.add('changed');chk();});if(r)r.addEventListener('input',chk);})();</script>";
+}
 
 if ($can) {
     // com demanda original, a atividade entra como subtarefa dela (a conclusão da mãe espera as atividades); sem ela, é atividade avulsa do plano

@@ -1,8 +1,23 @@
 # Devolutiva 2: da Gestão de Demandas para a Gestão Integrada da Operação de Marketing
 
-Resposta técnica ao *Debriefing do protótipo* de 10/11/2026 (Desenvolvimento / TI). Versão do plugin: **0.4.0** (GLPI 11 e 12).
+Resposta técnica ao *Debriefing do protótipo* de 10/11/2026 (Desenvolvimento / TI). Versão do plugin: **0.5.0** (GLPI 11 e 12). A seção 0 responde ao alinhamento de 14/11/2026; as demais mantêm a devolutiva de 10/11.
 
 Legenda da classificação: **Entregue** (já na 0.4.0) · **Disponível** (já existia e atende) · **Ajuste simples** · **Desenvolvimento adicional** · **Etapa futura**.
+
+## 0. Resposta ao alinhamento de 14/11/2026 (v0.5.0)
+
+| # | Ponto levantado | Situação | Como atende |
+|---|---|---|---|
+| 1a | Upload e download direto de entregáveis | **Entregue** | Ficha da demanda → *Entregáveis (arquivos)*: envio múltiplo (até 25 MB, limitado também pelo PHP do servidor), comentário, SHA-256, remoção, download sempre como anexo e registro de cada download no histórico. Arquivos ficam fora da pasta pública do GLPI. Executáveis e páginas (.php, .html, .js, .svg…) são recusados. Os arquivos contam como evidência para concluir (RN-05). |
+| 1b | Reprogramação de prazo: justificativa, aviso à Gerência, identificação permanente de adiadas | **Entregue** | Trocar um prazo já confirmado exige justificativa (a primeira confirmação é livre). Cada troca guarda data anterior, nova data, autor e motivo. Selo **Adiada ×N** permanente (não some se o prazo for antecipado depois), prazo original na ficha, filtro "Só adiadas" e card "Adiadas" no painel. A Gerência (usuários definidos em Configurações → Demandas) recebe pop-up e, se ligado, e-mail (evento "Prazo reprogramado"); sem Gerência definida, o aviso vai ao aprovador e ao responsável pelo projeto. Também vale na edição em lote do plano. |
+| 1c | Restrição de visibilidade por perfil | **Entregue** | Novo direito **Ver todas as demandas** em Administração → Perfis. Sem ele, o usuário vê só o que pediu, executa ou aprova, e o que pertence a projetos e planos de que é responsável (lista, Kanban, painel, projetos, planos, ficha, download e mudança de situação). Na atualização, quem já tinha acesso ganhou o direito para nada mudar; o administrador retira onde quiser. |
+| 1d | Importação Excel/CSV | **Entregue** (antecipada) | Menu *Importar planilha*: aceita .xlsx e .csv, reconhece as colunas pelo nome (título, responsável, prazo, início, prioridade, tipo, pilar, projeto, plano, objetivo, entrega, situação, % execução), mostra a conferência linha a linha (ok, aviso, erro, duplicada) e só grava após a confirmação. Opção de criar pilares/projetos/planos que faltarem e de ignorar duplicadas. Modelo CSV para baixar. |
+| 2 | Distribuição das atividades no plano de ação | **Entregue** | Ficha do plano: tabela editável com responsável, início, prazo, prioridade, dependência (recusa ciclos) e % de execução, salvando de uma vez. Alterar responsável avisa quem recebeu; alterar prazo segue a regra de reprogramação. |
+| 3 | Cálculo do progresso e execução efetiva | **Entregue** | Projeto e plano mostram três medidas: **avanço por situação** (média de 5% recebida, 15% triagem, 30% planejada, 55% em andamento/bloqueada/risco/terceiro, 80% aprovação, 100% concluída; canceladas fora), **execução efetiva** (média do % informado pelo responsável em cada atividade; concluída = 100%; sem informação = 0%; mostra quantas abertas já têm % informado) e **cronograma decorrido** com o desvio em pontos percentuais. A demanda-mãe de um plano não entra na conta. Ponderação por esforço (horas) fica como evolução. |
+| 4 | Atividades recorrentes | **Mantida no planejamento** | Próximo incremento. Proposta: modelo de recorrência (semanal, quinzenal, mensal, dia do mês/semana, vigência e responsável) que gera as atividades automaticamente pela rotina agendada do GLPI, com o mesmo fluxo e SLO das demais. A decidir com o Marketing: lista das rotinas atuais, janela de geração e o que fazer com ocorrências não concluídas. |
+| 5 | SLOs: regras, prazos e gatilhos | **Depende de definição do Marketing** | A estrutura (homologação com evidência, pausas, aplicabilidade, vigência, grupos) está pronta. Faltam: (a) prazo e estados inicial/final de cada processo, em dias úteis ou corridos; (b) quem homologa e a evidência do aceite; (c) os gatilhos hoje indisponíveis ("briefing validado", "última atualização", "aceite registrado"), que exigem desenvolvimento depois que as regras forem definidas. Os SLOs semeados continuam desligados até a homologação. |
+
+Fora do escopo deste incremento, e também mantidos no backlog: aprovação do novo prazo antes de valer, nível de escalonamento em várias etapas e status "Adiada" como situação própria (hoje a marca é permanente e independente da situação).
 
 ## 1. Decisões pedidas (item 5)
 

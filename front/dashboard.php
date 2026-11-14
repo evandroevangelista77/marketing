@@ -72,7 +72,7 @@ $numeric = function (array $data, string $key) {
         default  => isset($data['ids'][$key]) ? count($data['ids'][$key]) : null,
     };
 };
-$good = ['total' => null, 'open' => null, 'done' => 'up', 'overdue' => 'down', 'attention' => 'down', 'approval' => null, 'unassigned' => 'down', 'slo' => 'down', 'avg' => 'down', 'ontime' => 'up', 'external' => null, 'internal' => null, 'project' => null];
+$good = ['total' => null, 'open' => null, 'done' => 'up', 'overdue' => 'down', 'attention' => 'down', 'approval' => null, 'unassigned' => 'down', 'slo' => 'down', 'postponed' => 'down', 'avg' => 'down', 'ontime' => 'up', 'external' => null, 'internal' => null, 'project' => null];
 $deltaHtml = function (string $key) use ($pd, $hasPrev, $d, $numeric, $good, $e): string {
     if (!$hasPrev) {
         return '';

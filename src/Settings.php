@@ -31,6 +31,7 @@ class Settings
         'complement'         => ['Complemento de briefing solicitado', 'Solicitante'],
         'note'               => ['Nova atualização na demanda', 'Responsável e solicitante'],
         'slo_breach'         => ['SLO vencido', 'Responsável e escalonamento'],
+        'rescheduled'        => ['Prazo reprogramado', 'Gerência (usuários definidos em Configurações) e responsável'],
     ];
 
     public const STATUS_COLORS = [
@@ -61,7 +62,7 @@ class Settings
             'status_colors'      => json_encode(self::STATUS_COLORS),
         ];
         foreach (array_keys(self::EVENTS) as $ev) {
-            $d['ev_' . $ev . '_popup'] = in_array($ev, ['assigned', 'approval_requested', 'approval_decided', 'complement', 'slo_breach', 'note'], true) ? '1' : '0';
+            $d['ev_' . $ev . '_popup'] = in_array($ev, ['assigned', 'approval_requested', 'approval_decided', 'complement', 'slo_breach', 'note', 'rescheduled'], true) ? '1' : '0';
             $d['ev_' . $ev . '_mail'] = '0';
         }
         return $d;
@@ -95,7 +96,6 @@ class Settings
     // ---------------------------------------------------------------- preferências por usuário
 
     public const USER_CONTEXT = 'plugin:marketing:users';
-    public const THEMES = ['auto', 'light', 'dark'];
 
     /** @var array<string, string>|null */
     private static ?array $userCache = null;
@@ -119,11 +119,10 @@ class Settings
         self::$userCache = null;
     }
 
-    /** Tema das páginas do plugin para o usuário: "auto" (segue o GLPI), "light" (diurno) ou "dark" (noturno). */
-    public static function userTheme(int $userId): string
+    /** @return int[] usuários da Gerência, avisados a cada reprogramação de prazo */
+    public static function managers(): array
     {
-        $t = self::userPref($userId, 'theme', 'auto');
-        return in_array($t, self::THEMES, true) ? $t : 'auto';
+        return array_values(array_unique(array_filter(array_map('intval', explode(',', self::get('manager_users', ''))))));
     }
 
     public static function pollSeconds(): int

@@ -21,7 +21,7 @@ $v = [
     'pillars_id' => (int) ($_GET['pillar'] ?? 0), 'mkt_projects_id' => (int) ($_GET['project'] ?? 0), 'plans_id' => (int) ($_GET['plan'] ?? 0),
 ];
 $open = [];
-foreach ($DB->request(['SELECT' => ['id', 'code', 'name'], 'FROM' => Demand::getTable(), 'WHERE' => ['is_deleted' => 0, 'NOT' => ['status' => [Demand::STATUS_DONE, Demand::STATUS_CANCELLED]]], 'ORDER' => 'id DESC', 'LIMIT' => 300]) as $r) {
+foreach ($DB->request(['SELECT' => ['id', 'code', 'name'], 'FROM' => Demand::getTable(), 'WHERE' => Demand::restrict(['is_deleted' => 0, 'NOT' => ['status' => [Demand::STATUS_DONE, Demand::STATUS_CANCELLED]]]), 'ORDER' => 'id DESC', 'LIMIT' => 300]) as $r) {
     $open[(int) $r['id']] = $r['code'] . ' · ' . $r['name'];
 }
 

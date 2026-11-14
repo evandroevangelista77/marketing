@@ -60,7 +60,7 @@ if ($pillarId > 0) {
 if ($projectId > 0) {
     $where['mkt_projects_id'] = $projectId;
 }
-$all = iterator_to_array($DB->request(['FROM' => Demand::getTable(), 'WHERE' => $where, 'ORDER' => ['priority ASC', 'id DESC']]), false);
+$all = iterator_to_array($DB->request(['FROM' => Demand::getTable(), 'WHERE' => Demand::restrict($where), 'ORDER' => ['priority ASC', 'id DESC']]), false);
 
 Ui::header($view === 'table' ? 'Tabela principal' : 'Quadro Kanban', 'kanban');
 echo Ui::title(
@@ -108,7 +108,7 @@ if ($view === 'board') {
             $typeColor = (int) $r['types_id'] > 0 ? ($types[(int) $r['types_id']]['color'] ?? $c) : $c;
             echo "<article class='mkt-card" . ($late ? ' late' : '') . "' draggable='" . ($canMove ? 'true' : 'false') . "' data-id='" . (int) $r['id'] . "' style='--c:" . $e($typeColor) . "'>"
                 . "<div class='mkt-code'>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . ($r['origin'] === Demand::ORIGIN_INTERNAL ? ' · interna' : '') . ((int) $r['mkt_projects_id'] > 0 ? ' · ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name'] ?? '') : '') . "</div>"
-                . "<a class='name' href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a>"
+                . "<a class='name' href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a>" . Ui::postponedBadge($r)
                 . "<div class='meta'><span><i class='ti ti-user'></i> " . $e((int) $r['users_id_assigned'] > 0 ? getUserName((int) $r['users_id_assigned']) : 'sem responsável') . "</span>"
                 . ($deadline ? "<span class='" . ($late ? 'text-danger fw-bold' : '') . "'><i class='ti ti-calendar'></i> " . $e(Ui::date($deadline)) . "</span>" : '')
                 . "<span>" . $e(Demand::PRIORITIES[(int) $r['priority']] ?? '') . "</span></div></article>";
@@ -186,7 +186,7 @@ foreach ($groups as $key => $list) {
         $tip = 'Entrada ' . Ui::date($r['sent_at'] ?: $r['date_creation']) . ' → prazo ' . ($dl ? Ui::date($dl) : 'sem prazo') . ' · progresso ' . $progress . '%';
         $stars = 6 - max(1, min(5, (int) $r['priority']));
         echo "<div class='mkt-row" . ($late ? ' late' : '') . "' data-id='" . (int) $r['id'] . "'>"
-            . "<div class='mkt-cell-name'><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a><small>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . ($r['origin'] === Demand::ORIGIN_INTERNAL ? ' · interna' : '') . ((int) $r['mkt_projects_id'] > 0 ? ' · ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name'] ?? '') : '') . "</small></div>"
+            . "<div class='mkt-cell-name'><a href='" . $e(Ui::url('/front/demand.php?id=' . (int) $r['id'])) . "'>" . $e($r['name']) . "</a>" . Ui::postponedBadge($r) . "<small>" . $e($r['code']) . ((int) $r['types_id'] > 0 ? ' · ' . $e($types[(int) $r['types_id']]['name'] ?? '') : '') . ($r['origin'] === Demand::ORIGIN_INTERNAL ? ' · interna' : '') . ((int) $r['mkt_projects_id'] > 0 ? ' · ' . $e($projectsAll[(int) $r['mkt_projects_id']]['name'] ?? '') : '') . "</small></div>"
             . "<div class='mkt-cell-resp'>" . Ui::avatar((int) $r['users_id_assigned']) . "</div>"
             . "<div class='mkt-cell-st'>$status</div>"
             . "<div class='mkt-cell-tl'><div class='mkt-tl' title='" . $e($tip) . "'><span style='width:{$progress}%'></span></div></div>"

@@ -58,7 +58,6 @@ $check('T0 há outro usuário ativo para os testes', $otherId > 0);
 
 // ---------------------------------------------------------------- configurações
 $old = Settings::all();
-$oldTheme = Settings::userTheme($me);
 Settings::save(['poll_seconds' => '33', 'sound_enabled' => '1', 'popup_enabled' => '1', 'ev_assigned_popup' => '1']);
 $check('C1 configuração gravada e lida', Settings::pollSeconds() === 33 && Settings::bool('sound_enabled'));
 $check('C2 cores padrão dos 11 status', count(Settings::statusColors()) === 11);
@@ -192,15 +191,7 @@ $check('X5 funil termina em 25% de conclusão', $flow['funnel'][4]['pct'] === 25
 $check('X6 tempo por etapa só traz situações com histórico', count($flow['stages']) >= 1 && $flow['bottleneck'] !== null && $flow['bottleneck']['days'] >= 0);
 $check('X7 fluxo com período vazio não quebra', Dashboard::flow(Dashboard::build($f2))['bottleneck'] === null);
 
-// tema diurno/noturno por usuário, visão do quadro e peças da tabela principal
-$check('TH1 tema padrão é automático', Settings::userTheme(987654) === 'auto');
-Settings::setUserPref($me, 'theme', 'light');
-$check('TH2 tema diurno gravado por usuário', Settings::userTheme($me) === 'light' && Settings::userTheme(987654) === 'auto');
-Settings::setUserPref($me, 'theme', 'dark');
-$check('TH3 tema noturno gravado', Settings::userTheme($me) === 'dark');
-Settings::setUserPref($me, 'theme', 'invalido');
-$check('TH4 valor inválido volta a automático', Settings::userTheme($me) === 'auto');
-Settings::setUserPref($me, 'theme', $oldTheme ?? 'auto');
+// visão do quadro e peças da tabela principal
 Settings::setUserPref($me, 'kanban_view', 'table');
 $check('TH5 visão do quadro gravada', Settings::userPref($me, 'kanban_view', 'board') === 'table');
 Settings::setUserPref($me, 'kanban_view', 'board');

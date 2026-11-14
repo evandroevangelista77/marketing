@@ -30,19 +30,7 @@ class Ui
         Html::header($title, '', self::SECTOR, $item);
         $css = dirname(__DIR__) . '/public/css/marketing.css';
         echo "<link rel='stylesheet' href='" . self::e(self::url('/css/marketing.css') . '?v=' . PLUGIN_MARKETING_VERSION . '-' . @filemtime($css)) . "'>";
-        // tema (diurno/noturno/automático) do usuário, aplicado antes do conteúdo da página
-        echo "<meta name='mkt-theme' content='" . self::e(Settings::userTheme((int) \Session::getLoginUserID())) . "'>";
-        echo self::script('theme.js');
         echo self::script('drawer.js');
-    }
-
-    /** Botões Automático / Diurno / Noturno que aparecem no topo de todas as páginas do plugin. */
-    public static function themeSwitch(): string
-    {
-        $cur = Settings::userTheme((int) \Session::getLoginUserID());
-        $btn = fn (string $v, string $icon, string $label) => "<button type='button' data-mkt-theme='$v' class='" . ($cur === $v ? 'on' : '') . "' title='" . self::e($label) . "' aria-label='" . self::e($label) . "'><i class='ti $icon'></i></button>";
-        return "<div class='mkt-theme' role='group' aria-label='Tema das páginas'>"
-            . $btn('auto', 'ti-device-desktop', 'Automático (segue o tema do GLPI)') . $btn('light', 'ti-sun', 'Diurno (claro)') . $btn('dark', 'ti-moon', 'Noturno (escuro)') . "</div>";
     }
 
     public static function script(string $file): string
@@ -55,7 +43,7 @@ class Ui
     {
         return "<div class='mkt-title'><div><div class='mkt-crumb'>" . self::e(self::CRUMB) . "</div><h2>" . self::e($title) . "</h2>"
             . ($subtitle !== '' ? "<div class='text-secondary small mkt-subtitle'>" . self::e($subtitle) . "</div>" : '')
-            . "</div><div class='d-flex flex-wrap gap-2 align-items-center'>" . self::themeSwitch() . $actions . "</div></div>";
+            . "</div><div class='d-flex flex-wrap gap-2 align-items-center'>" . $actions . "</div></div>";
     }
 
     public static function button(string $label, string $url, string $icon = 'ti-plus', string $cls = 'btn-primary'): string
@@ -160,6 +148,44 @@ class Ui
     public static function originBadge(string $origin): string
     {
         return self::badge(Demand::ORIGIN_SHORT[$origin] ?? 'Externa', Demand::ORIGIN_COLORS[$origin] ?? '#94a3b8', $origin === Demand::ORIGIN_INTERNAL ? 'ti-building' : 'ti-inbox');
+    }
+
+    /**
+     * Blocos de progresso de um plano ou projeto: avanço pela situação das atividades, execução efetiva (percentual informado),
+     * parte do cronograma já decorrida e o desvio entre a execução efetiva e o esperado.
+     *
+     * @param array<int, array<string, mixed>> $rows atividades
+     */
+    public static function metrics(array $rows, ?string $start, ?string $end): string
+    {
+        $status = Structure::progress($rows);
+        $eff = Structure::effective($rows);
+        [$informed, $open] = Structure::effectiveCoverage($rows);
+        $exp = Structure::expected($start, $end);
+        $bar = fn (?int $v, string $c) => $v === null ? "<span class='text-secondary small'>—</span>" : self::bar($v, $c);
+        $h = "<div class='mkt-metric'><small title='Média do avanço de cada atividade conforme a situação no fluxo (recebida 5%, planejada 30%, em andamento 55%, aprovação 80%, concluída 100%)'>Avanço por situação</small>" . $bar($status, '#6366f1') . "</div>";
+        $h .= "<div class='mkt-metric'><small title='Média do percentual de execução informado pelo responsável em cada atividade (concluída = 100%)'>Execução efetiva</small>" . $bar($eff, '#22c55e')
+            . ($open ? "<span class='small text-secondary'>$informed de $open abertas com % informado</span>" : '') . "</div>";
+        if ($exp !== null) {
+            $h .= "<div class='mkt-metric'><small title='Parte do período (início → fim) que já passou'>Cronograma decorrido</small>" . $bar($exp, '#94a3b8');
+            if ($eff !== null) {
+                $d = $eff - $exp;
+                $h .= "<span class='delta " . ($d < 0 ? 'neg' : 'pos') . "'>" . ($d >= 0 ? '+' : '−') . abs($d) . " p.p. " . ($d < 0 ? 'abaixo do esperado' : 'em dia ou à frente') . "</span>";
+            }
+            $h .= "</div>";
+        }
+        return $h;
+    }
+
+    /** Selo permanente "Adiada" (prazo já foi empurrado para frente ao menos uma vez), com a quantidade de reprogramações. */
+    public static function postponedBadge(array $row): string
+    {
+        if (empty($row['is_postponed'])) {
+            return '';
+        }
+        $n = max(1, (int) ($row['postponed_count'] ?? 1));
+        $orig = !empty($row['original_date']) ? ' · prazo original ' . self::date((string) $row['original_date']) : '';
+        return " <span class='mkt-postponed' title='" . self::e('Prazo reprogramado ' . $n . 'x' . $orig) . "'><i class='ti ti-calendar-pause'></i>Adiada" . ($n > 1 ? ' ×' . $n : '') . "</span>";
     }
 
     /** Barra de progresso fina (0–100) para projetos e planos. */
