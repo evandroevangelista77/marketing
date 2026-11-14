@@ -24,6 +24,7 @@ class BookPdf
     private ?string $logo;
     private float $logoRatio = 2.4;
     private bool $inToc = false;
+    private bool $logoDefault = false;
 
     public static function render(array $d, string $author, ?string $logo = null): string
     {
@@ -36,6 +37,7 @@ class BookPdf
         $this->author = $author;
         $this->logo = $logo;
         $this->logoRatio = 2.4;
+        $this->logoDefault = $logo !== null && str_ends_with($logo, 'oak-tree.png');
         if ($logo && ($info = @getimagesize($logo))) {
             $this->logoRatio = $info[0] / max(1, $info[1]);
         }
@@ -132,28 +134,36 @@ class BookPdf
     private function pageHeader(string $title, string $sub = ''): void
     {
         $p = $this->p;
-        $p->SetFillColor(255, 255, 255);
+        // faixa superior toda em azul escuro, com a árvore da Oakmont à esquerda
+        $p->SetFillColor(...self::NAVY);
         $p->Rect(0, 0, 297, 17, 'F');
         $p->SetFillColor(...self::BLUE);
         $p->Rect(0, 16.3, 297, 0.9, 'F');
-        $p->SetFillColor(...self::NAVY);
-        $p->Rect(0, 0, 5, 17.2, 'F');
         $tx = 12;
         if ($this->logo) {
-            $h = 12;
+            $h = 12.5;
+            $w = $h * $this->logoRatio;
             try {
-                $p->Image($this->logo, 11, 2.5, $h * $this->logoRatio, $h, '', '', '', false, 200);
-                $tx = 11 + $h * $this->logoRatio + 5;
-                $p->SetDrawColor(...self::LINE);
+                if (!$this->logoDefault) {
+                    // logotipo próprio (fundo branco): vai sobre um quadro branco para não destoar da faixa escura
+                    $p->SetFillColor(255, 255, 255);
+                    $p->RoundedRect(10, 2, $w + 3, $h + 1, 1.5, '1111', 'F');
+                    $p->Image($this->logo, 11.5, 2.5, $w, $h, '', '', '', false, 200);
+                    $tx = 10 + $w + 8;
+                } else {
+                    $p->Image($this->logo, 11, 2.2, $w, $h, '', '', '', false, 200);
+                    $tx = 11 + $w + 5;
+                }
+                $p->SetDrawColor(71, 85, 105);
                 $p->SetLineWidth(0.3);
-                $p->Line($tx - 2.5, 3.5, $tx - 2.5, 13.5);
+                $p->Line($tx - 2.6, 3.8, $tx - 2.6, 13.2);
             } catch (\Throwable $e) {
                 $tx = 12;
             }
         }
-        $this->txt($tx, 4.6, 170, $title, 13, true, self::NAVY);
-        $this->txt(190, 3.4, 95, 'KPIs Marketing', 9, true, self::BLUE, 'R');
-        $this->txt(190, 8.4, 95, ($this->d['kind'] === 'annual' ? 'Balanço anual' : 'Relatório mensal') . ' · ' . $this->d['label'], 7.5, false, self::MUTED, 'R');
+        $this->txt($tx, 4.6, 170, $title, 13, true, [255, 255, 255]);
+        $this->txt(190, 3.4, 95, 'KPIs Marketing', 9, true, [147, 197, 253], 'R');
+        $this->txt(190, 8.4, 95, ($this->d['kind'] === 'annual' ? 'Balanço anual' : 'Relatório mensal') . ' · ' . $this->d['label'], 7.5, false, [203, 213, 225], 'R');
         if ($sub !== '') {
             $this->txt(12, 19.6, self::W, $sub, 8.5, false, self::MUTED);
         }
@@ -519,9 +529,13 @@ class BookPdf
         $p->SetFillColor(30, 58, 138);
         $p->Rect(190, 0, 107, 210, 'F');
         if ($this->logo) {
-            $this->box(24, 22, 92, 44, [255, 255, 255], false, 3);
             try {
-                $p->Image($this->logo, 28, 25, 84, 38, '', '', '', true, 300, '', false, false, 0, 'CM');
+                if ($this->logoDefault) {
+                    $p->Image($this->logo, 24, 18, 0, 52, '', '', '', true, 300);
+                } else {
+                    $this->box(24, 22, 92, 44, [255, 255, 255], false, 3);
+                    $p->Image($this->logo, 28, 25, 84, 38, '', '', '', true, 300, '', false, false, 0, 'CM');
+                }
             } catch (\Throwable $e) {
                 // logotipo ilegível: a capa segue sem ele
             }

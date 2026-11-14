@@ -29,8 +29,8 @@ class Book
         if ($f !== '' && is_file($path)) {
             return self::flatten($path);
         }
-        // sem logotipo enviado: usa o logotipo padrão que acompanha o plugin (Oakmont), para que todas as páginas tenham marca
-        $default = dirname(__DIR__) . '/public/img/oak-logo.png';
+        // sem logotipo enviado: usa a árvore da Oakmont que acompanha o plugin (branca sobre azul escuro), para que todas as páginas tenham marca
+        $default = dirname(__DIR__) . '/public/img/oak-tree.png';
         return is_file($default) ? $default : null;
     }
 
