@@ -30,8 +30,31 @@ class Book
             return self::flatten($path);
         }
         // sem logotipo enviado: usa a árvore da Oakmont que acompanha o plugin (branca sobre azul escuro), para que todas as páginas tenham marca
-        $default = dirname(__DIR__) . '/public/img/oak-tree.png';
-        return is_file($default) ? $default : null;
+        $default = self::pluginFile('public/img/oak-tree.png');
+        return $default;
+    }
+
+    /**
+     * Caminho absoluto de um arquivo do plugin. O GLPI inclui os plugins por caminho relativo (./plugins/marketing/...), que deixa de valer
+     * quando o PHP muda de diretório (acontece no contexto web), então tenta a pasta absoluta do código e as pastas padrão de plugins.
+     */
+    public static function pluginFile(string $rel): ?string
+    {
+        $dir = dirname(__DIR__);
+        $candidates = [$dir . '/' . $rel];
+        if (defined('GLPI_ROOT')) {
+            $candidates[] = rtrim((string) GLPI_ROOT, '/') . '/plugins/marketing/' . $rel;
+            $candidates[] = rtrim((string) GLPI_ROOT, '/') . '/' . ltrim($dir, './') . '/' . $rel;
+        }
+        if (defined('GLPI_MARKETPLACE_DIR')) {
+            $candidates[] = rtrim((string) GLPI_MARKETPLACE_DIR, '/') . '/marketing/' . $rel;
+        }
+        foreach ($candidates as $c) {
+            if (is_file($c)) {
+                return str_starts_with($c, '/') ? $c : (realpath($c) ?: $c);
+            }
+        }
+        return null;
     }
 
     /** Devolve um PNG sem transparência (o PDF não reproduz bem PNG com canal alfa). Usa um arquivo temporário. */
@@ -211,7 +234,11 @@ class Book
         global $DB;
         $data = self::collect($kind, $from, $to, $label);
         $author = $userId > 0 ? getUserName($userId) : 'Envio automático';
-        $pdf = BookPdf::render($data, $author, self::logoPath());
+        $logo = self::logoPath();
+        if ($logo === null || !is_readable($logo)) {
+            \Toolbox::logInFile('marketing', 'Book: logotipo indisponivel (' . var_export($logo, true) . ")\n");
+        }
+        $pdf = BookPdf::render($data, $author, $logo);
         $dir = self::dir();
         if (!is_dir($dir) && !@mkdir($dir, 0770, true) && !is_dir($dir)) {
             return 0;

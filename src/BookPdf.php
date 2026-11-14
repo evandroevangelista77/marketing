@@ -25,6 +25,8 @@ class BookPdf
     private float $logoRatio = 2.4;
     private bool $inToc = false;
     private bool $logoDefault = false;
+    private ?string $logoData = null;
+    private string $logoType = 'PNG';
 
     public static function render(array $d, string $author, ?string $logo = null): string
     {
@@ -38,8 +40,15 @@ class BookPdf
         $this->logo = $logo;
         $this->logoRatio = 2.4;
         $this->logoDefault = $logo !== null && str_ends_with($logo, 'oak-tree.png');
-        if ($logo && ($info = @getimagesize($logo))) {
+        // a imagem é lida já aqui e entregue ao PDF como bytes: o caminho do arquivo pode ser relativo e deixar de valer no contexto web
+        $bytes = $logo !== null ? @file_get_contents($logo) : false;
+        if ($bytes !== false && ($info = @getimagesizefromstring($bytes))) {
+            $this->logoData = $bytes;
+            $this->logoType = $info[2] === IMAGETYPE_JPEG ? 'JPEG' : 'PNG';
             $this->logoRatio = $info[0] / max(1, $info[1]);
+        } else {
+            $this->logo = null;
+            \Toolbox::logInFile('marketing', 'Book: logotipo ilegivel (' . var_export($logo, true) . ")\n");
         }
         $this->p = new ReportPdf('L', 'mm', 'A4', true, 'UTF-8');
     }
@@ -148,16 +157,17 @@ class BookPdf
                     // logotipo próprio (fundo branco): vai sobre um quadro branco para não destoar da faixa escura
                     $p->SetFillColor(255, 255, 255);
                     $p->RoundedRect(10, 2, $w + 3, $h + 1, 1.5, '1111', 'F');
-                    $p->Image($this->logo, 11.5, 2.5, $w, $h, '', '', '', false, 200);
+                    $p->Image('@' . $this->logoData, 11.5, 2.5, $w, $h, $this->logoType, '', '', false, 200);
                     $tx = 10 + $w + 8;
                 } else {
-                    $p->Image($this->logo, 11, 2.2, $w, $h, '', '', '', false, 200);
+                    $p->Image('@' . $this->logoData, 11, 2.2, $w, $h, $this->logoType, '', '', false, 200);
                     $tx = 11 + $w + 5;
                 }
                 $p->SetDrawColor(71, 85, 105);
                 $p->SetLineWidth(0.3);
                 $p->Line($tx - 2.6, 3.8, $tx - 2.6, 13.2);
             } catch (\Throwable $e) {
+                \Toolbox::logInFile('marketing', 'Book: nao foi possivel desenhar o logotipo (' . $this->logo . '): ' . $e->getMessage() . "\n");
                 $tx = 12;
             }
         }
@@ -531,13 +541,13 @@ class BookPdf
         if ($this->logo) {
             try {
                 if ($this->logoDefault) {
-                    $p->Image($this->logo, 24, 18, 0, 52, '', '', '', true, 300);
+                    $p->Image('@' . $this->logoData, 24, 18, 0, 52, $this->logoType, '', '', true, 300);
                 } else {
                     $this->box(24, 22, 92, 44, [255, 255, 255], false, 3);
-                    $p->Image($this->logo, 28, 25, 84, 38, '', '', '', true, 300, '', false, false, 0, 'CM');
+                    $p->Image('@' . $this->logoData, 28, 25, 84, 38, $this->logoType, '', '', true, 300, '', false, false, 0, 'CM');
                 }
             } catch (\Throwable $e) {
-                // logotipo ilegível: a capa segue sem ele
+                \Toolbox::logInFile('marketing', 'Book: nao foi possivel desenhar o logotipo da capa (' . $this->logo . '): ' . $e->getMessage() . "\n");
             }
         }
         $this->txt(24, 84, 160, 'OAKMONT GROUP · MARKETING', 10, true, [148, 163, 184]);
