@@ -9,7 +9,10 @@ use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\Alert;
 use GlpiPlugin\Marketing\Automation;
 use GlpiPlugin\Marketing\Cron;
+use GlpiPlugin\Marketing\Book;
 use GlpiPlugin\Marketing\Demand;
+use GlpiPlugin\Marketing\Kpi;
+use GlpiPlugin\Marketing\Okr;
 use GlpiPlugin\Marketing\Note;
 use GlpiPlugin\Marketing\Outbox;
 use GlpiPlugin\Marketing\Settings;
@@ -25,6 +28,7 @@ function plugin_marketing_tables(): array
         Type::getTable(), Slo::getTable(), Automation::getTable(), Alert::getTable(), Note::getTable(), Outbox::getTable(),
         Structure::pillarsTable(), Structure::projectsTable(), Structure::plansTable(), Structure::milestonesTable(),
         Demand::reschedulesTable(), Demand::filesTable(),
+        Okr::table(), Okr::krTable(), Book::table(), Kpi::snapTable(),
     ];
 }
 
@@ -99,6 +103,18 @@ function plugin_marketing_install(): bool
         `size` bigint unsigned NOT NULL DEFAULT 0, `sha256` char(64) DEFAULT NULL, `comment` varchar(500) DEFAULT NULL, `users_id` $int,
         `date_creation` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`), KEY `demand` (`demands_id`)");
 
+    // v0.6: KPIs, OKRs e book executivo
+    $create(Okr::table(), "$id, `name` varchar(200) NOT NULL, `description` text, `users_id` $int, `pillars_id` $int, `date_from` date DEFAULT NULL, `date_to` date DEFAULT NULL,
+        `is_archived` tinyint NOT NULL DEFAULT 0, `date_creation` timestamp NULL DEFAULT NULL, PRIMARY KEY (`id`)");
+    $create(Okr::krTable(), "$id, `okrs_id` $int, `name` varchar(200) NOT NULL, `kind` varchar(10) NOT NULL DEFAULT 'kpi', `kpi_key` varchar(40) NOT NULL DEFAULT '', `projects_id` $int,
+        `start_value` double NOT NULL DEFAULT 0, `target_value` double DEFAULT NULL, `current_value` double DEFAULT NULL, `weight` tinyint NOT NULL DEFAULT 1,
+        PRIMARY KEY (`id`), KEY `okr` (`okrs_id`)");
+    $create(Book::table(), "$id, `kind` varchar(10) NOT NULL DEFAULT 'manual', `label` varchar(80) NOT NULL, `date_from` date DEFAULT NULL, `date_to` date DEFAULT NULL,
+        `stored_name` varchar(64) NOT NULL, `size` bigint unsigned NOT NULL DEFAULT 0, `score` int DEFAULT NULL, `users_id` $int, `date_creation` timestamp NULL DEFAULT NULL,
+        `sent_at` timestamp NULL DEFAULT NULL, `sent_to` text, `send_status` varchar(250) DEFAULT NULL, PRIMARY KEY (`id`), KEY `kind` (`kind`,`date_from`)");
+    $create(Kpi::snapTable(), "$id, `period` char(7) NOT NULL, `kpi` varchar(40) NOT NULL, `value` double DEFAULT NULL, `date_mod` timestamp NULL DEFAULT NULL,
+        PRIMARY KEY (`id`), KEY `period` (`period`,`kpi`)");
+
     // colunas acrescentadas depois da primeira versão (cada uma só é criada se faltar)
     $newColumns = [
         'accepted_at'       => 'timestamp NULL DEFAULT NULL',
@@ -156,6 +172,7 @@ function plugin_marketing_install(): bool
     // rotinas agendadas: envio de e-mails, SLOs vencidos e limpeza de avisos
     CronTask::register(Cron::class, 'marketingmail', 5 * MINUTE_TIMESTAMP, ['comment' => 'Gestão de Demandas: envia a fila de e-mails', 'mode' => CronTask::MODE_EXTERNAL]);
     CronTask::register(Cron::class, 'marketingslo', 15 * MINUTE_TIMESTAMP, ['comment' => 'Gestão de Demandas: avisa SLOs vencidos', 'mode' => CronTask::MODE_EXTERNAL]);
+    CronTask::register(Cron::class, 'marketingbook', DAY_TIMESTAMP, ['comment' => 'Gestão de Demandas: instantâneo dos KPIs e envio do book executivo', 'mode' => CronTask::MODE_EXTERNAL]);
     CronTask::register(Cron::class, 'marketingpurge', DAY_TIMESTAMP, ['comment' => 'Gestão de Demandas: limpa avisos antigos', 'mode' => CronTask::MODE_EXTERNAL]);
 
     // direito "plugin_marketing" (aba em Perfis). Padrão: central com UPDATE = tudo; demais = leitura
@@ -193,6 +210,16 @@ function plugin_marketing_install(): bool
             $DB->update(ProfileRight::getTable(), ['rights' => (int) $row['rights'] | Access::VIEW_ALL], ['id' => $row['id']]);
         }
         Settings::save(['rights_viewall_granted' => '1']);
+    }
+
+    // v0.6: "Book executivo" é do gerente de Marketing: só o Super-Admin recebe o bit na instalação/atualização (depois o administrador cria o perfil do gerente)
+    if (Settings::get('rights_executive_granted', '0') !== '1') {
+        foreach ($DB->request(['SELECT' => ['id'], 'FROM' => Profile::getTable(), 'WHERE' => ['name' => 'Super-Admin']]) as $p) {
+            foreach ($DB->request(['FROM' => ProfileRight::getTable(), 'WHERE' => ['name' => Access::$rightname, 'profiles_id' => $p['id']]]) as $row) {
+                $DB->update(ProfileRight::getTable(), ['rights' => (int) $row['rights'] | Access::EXECUTIVE], ['id' => $row['id']]);
+            }
+        }
+        Settings::save(['rights_executive_granted' => '1']);
     }
 
     // sessão já aberta passa a enxergar o direito sem novo login

@@ -32,6 +32,7 @@ class Settings
         'note'               => ['Nova atualização na demanda', 'Responsável e solicitante'],
         'slo_breach'         => ['SLO vencido', 'Responsável e escalonamento'],
         'rescheduled'        => ['Prazo reprogramado', 'Gerência (usuários definidos em Configurações) e responsável'],
+        'book'               => ['Book executivo gerado', 'Destinatários do book (gerente de Marketing)'],
     ];
 
     public const STATUS_COLORS = [
@@ -62,7 +63,7 @@ class Settings
             'status_colors'      => json_encode(self::STATUS_COLORS),
         ];
         foreach (array_keys(self::EVENTS) as $ev) {
-            $d['ev_' . $ev . '_popup'] = in_array($ev, ['assigned', 'approval_requested', 'approval_decided', 'complement', 'slo_breach', 'note', 'rescheduled'], true) ? '1' : '0';
+            $d['ev_' . $ev . '_popup'] = in_array($ev, ['assigned', 'approval_requested', 'approval_decided', 'complement', 'slo_breach', 'note', 'rescheduled', 'book'], true) ? '1' : '0';
             $d['ev_' . $ev . '_mail'] = '0';
         }
         return $d;

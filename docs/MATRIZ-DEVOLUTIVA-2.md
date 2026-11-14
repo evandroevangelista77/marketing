@@ -19,6 +19,10 @@ Legenda da classificação: **Entregue** (já na 0.4.0) · **Disponível** (já 
 
 Fora do escopo deste incremento, e também mantidos no backlog: aprovação do novo prazo antes de valer, nível de escalonamento em várias etapas e status "Adiada" como situação própria (hoje a marca é permanente e independente da situação).
 
+### Adendo (14/11/2026): KPI's e book executivo — **Entregue** (v0.6.0)
+
+Todos os indicadores que o plugin consegue gerar (37, em 7 grupos) com metas e semáforo editáveis; OKRs; ofensores com plano de recuperação e prazos recomendados; book executivo "KPIs Marketing" em PDF (mensal, anual e sob demanda) com envio automático todo dia 1º e anual no fim do ano. Acesso exclusivo do gerente de Marketing, pelo direito `Book executivo (KPIs, OKRs)`.
+
 ## 1. Decisões pedidas (item 5)
 
 **O GLPI suporta pilar → projeto → plano → atividade de forma nativa?** Não nesses quatro níveis. O GLPI tem `Project` e `ProjectTask`, que cobrem projeto e tarefa (com tarefa-filha), mas não têm pilar nem plano de ação, nem origem, nem os portões de triagem e aceite deste fluxo. A decisão foi **entidades próprias do plugin**: `pilar`, `projeto`, `plano de ação` (tabelas `glpi_plugin_marketing_*`), e a **atividade é a própria demanda** (coluna `origem`). Assim a hierarquia é opcional: uma demanda avulsa não precisa de projeto. A ligação com o `Project` nativo (RF-005) continua pendente e pode ser feita depois sem mudar o modelo.

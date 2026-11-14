@@ -10,6 +10,7 @@ Plugin de gestão de demandas, projetos e governança de Marketing. Cria a seç�
 - **Prazos**: reprogramação com justificativa, aviso à Gerência e marca permanente de demanda adiada.
 - **Entregáveis**: envio e download de arquivos na ficha, com histórico.
 - **Visibilidade por perfil** (direito *Ver todas as demandas*) e **importação de planilhas** Excel/CSV.
+- **KPI's** (exclusivo do gerente de Marketing, direito *Book executivo*): 37 indicadores em 7 grupos com metas e semáforo, OKRs, ofensores com plano e prazo de recuperação e o book executivo "KPIs Marketing" em PDF, com envio automático todo dia 1º e anual.
 - **Execução efetiva** (percentual informado) e edição em lote das atividades do plano de ação.
 - Aba do plugin em *Administração → Perfis* (direitos de leitura, atualização, aprovação, configuração, cadastro interno e ver todas as demandas).
 

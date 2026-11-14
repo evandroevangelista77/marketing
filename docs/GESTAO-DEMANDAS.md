@@ -80,6 +80,16 @@ Detalhe e situação de cada ponto em `docs/MATRIZ-DEVOLUTIVA-2.md`, seção 0. 
 - **Execução efetiva**: coluna `exec_percent`; `Demand::effectivePercent()`, `Structure::effective()`, `Structure::expected()` e `Ui::metrics()`.
 - **Importação**: `src/Importer.php` e `front/import.php` (xlsx via PhpSpreadsheet do GLPI, CSV nativo). Teste: `tests/pendencias.php`.
 
+## KPI's e book executivo (v0.6.0)
+
+Item de menu **KPI's**, exclusivo do perfil do gerente de Marketing (direito `Access::EXECUTIVE` = 16384, "Book executivo (KPIs, OKRs)"). Na instalação/atualização só o perfil Super-Admin recebe o bit; o administrador cria o perfil do gerente.
+
+- **Indicadores**: `src/Kpi.php` (catálogo de 37 KPIs, metas editáveis em `kpi_targets`, pontuação 0-100, semáforo, série de 12 meses reconstruída pelo histórico, instantâneos diários na tabela `kpisnaps`, ofensores com plano e prazo em dias úteis, demandas ofensoras e projetos em risco).
+- **OKRs**: `src/Okr.php` (objetivos e resultados-chave medidos por KPI, por projeto ou à mão).
+- **Book**: `src/Book.php` (coleta, guarda, histórico, envio por e-mail com PDF anexo e pop-up, rotina `marketingbook`: dia 1º até o dia 5 para o mensal; 31/12 ou 1º/jan para o anual) e `src/BookPdf.php` (PDF A4 paisagem "KPIs Marketing" com logotipo em todas as páginas, sumário, gráficos vetoriais, decisões, OKRs, projetos, ofensores, recuperação, cronograma e metodologia).
+- **Telas**: `front/kpi.php` (abas Visão geral, Indicadores, OKRs, Ofensores e recuperação, Books, Metas) e `public/js/kpi.js`.
+- **Teste**: `tests/kpi.php`.
+
 ## Instalação e atualização
 
 ```bash
@@ -96,6 +106,7 @@ Atualizar: copie a pasta para `plugins/marketing`, ajuste o dono (`www-data`) e 
 ```bash
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/gestao.php   # pop-up, notificações, automações, SLOs, painel, PDF
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/estrutura.php   # origens, pilar/projeto/plano, dependências, homologação e pausa de SLO
+sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/kpi.php   # KPIs, OKRs, ofensores, book em PDF, envio e rotina mensal/anual
 sudo -u www-data env GLPI_ROOT=/var/www/glpi php plugins/marketing/tests/pendencias.php   # reprogramação, entregáveis, visibilidade, execução efetiva, importação
 # também: poc.php, fase1.php, fase1b.php
 ```

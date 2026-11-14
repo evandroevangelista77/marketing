@@ -9,7 +9,7 @@ use Glpi\Plugin\Hooks;
 use GlpiPlugin\Marketing\Access;
 use GlpiPlugin\Marketing\ProfileTab;
 
-define('PLUGIN_MARKETING_VERSION', '0.5.0');
+define('PLUGIN_MARKETING_VERSION', '0.6.0');
 define('PLUGIN_MARKETING_MIN_GLPI', '11.0.0');
 define('PLUGIN_MARKETING_MAX_GLPI', '12.0.99');
 

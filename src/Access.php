@@ -12,6 +12,7 @@ use Session;
  *   APPROVE   registrar decisão de aprovação e concluir com exceção;
  *   CONFIGURE tipos, SLOs, notificações e automações (perfil Administrador);
  *   INTERNAL  cadastro interno do Marketing: atividades, projetos e planos de ação, sem o formulário de solicitação.
+ *   EXECUTIVE KPIs, OKRs e Book executivo: só o gerente de Marketing (envio automático mensal e anual incluído).
  *   VIEW_ALL  ver todas as demandas; sem este bit o usuário vê só as que pediu, as que executa/aprova e as dos seus projetos e planos.
  */
 class Access extends Base
@@ -20,6 +21,7 @@ class Access extends Base
     public const CONFIGURE = 2048;
     public const INTERNAL = 4096;
     public const VIEW_ALL = 8192;
+    public const EXECUTIVE = 16384;
 
     public static function getTypeName($nb = 0)
     {
@@ -75,6 +77,12 @@ class Access extends Base
         return Session::haveRight(self::$rightname, self::VIEW_ALL);
     }
 
+    /** Bit "Book executivo" (KPIs, OKRs, planos de recuperação e book): perfil do gerente de Marketing. */
+    public static function canExecutive(): bool
+    {
+        return Session::haveRight(self::$rightname, self::EXECUTIVE);
+    }
+
     private static function page(string $path): string
     {
         return '/plugins/marketing' . $path;
@@ -94,6 +102,9 @@ class Access extends Base
                 'links' => self::canInternal() ? ['add' => self::page('/front/activity.php')] : []],
             'kanban'    => ['title' => 'Quadro Kanban', 'page' => self::page('/front/kanban.php'), 'icon' => 'ti ti-layout-kanban'],
         ];
+        if (self::canExecutive()) {
+            $items['kpis'] = ['title' => "KPI's", 'page' => self::page('/front/kpi.php'), 'icon' => 'ti ti-target-arrow'];
+        }
         if (self::canInternal()) {
             $items['import'] = ['title' => 'Importar planilha', 'page' => self::page('/front/import.php'), 'icon' => 'ti ti-file-import'];
         }

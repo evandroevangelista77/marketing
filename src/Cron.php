@@ -13,6 +13,7 @@ class Cron
             'marketingmail'  => 'Gestão de Demandas: envia a fila de e-mails',
             'marketingslo'   => 'Gestão de Demandas: avisa SLOs vencidos',
             'marketingpurge' => 'Gestão de Demandas: limpa avisos antigos',
+            'marketingbook'  => 'Gestão de Demandas: instantâneo dos KPIs e envio do book executivo (mensal e anual)',
             default          => $name,
         }];
     }
@@ -27,6 +28,13 @@ class Cron
     public static function cronMarketingslo(CronTask $task): int
     {
         $n = Slo::checkBreaches();
+        $task->addVolume($n);
+        return $n > 0 ? 1 : 0;
+    }
+
+    public static function cronMarketingbook(CronTask $task): int
+    {
+        $n = Book::cron();
         $task->addVolume($n);
         return $n > 0 ? 1 : 0;
     }
