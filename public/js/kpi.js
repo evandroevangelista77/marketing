@@ -27,6 +27,7 @@
         ev.preventDefault();
         const q = new URLSearchParams();
         if (el.dataset.k) { q.set('k', el.dataset.k); q.set('from', D.from); q.set('to', D.to); }
+        else if (el.dataset.dim) { q.set('dim', el.dataset.dim); q.set('val', el.dataset.val || ''); q.set('from', D.from); q.set('to', D.to); }
         else if (el.dataset.g) { q.set('g', el.dataset.g); q.set('m', el.dataset.m); }
         else return;
         OakDrawer.open({title: 'Carregando…', icon: 'ti-loader', color: BLUE, html: '<div class="text-secondary">Buscando os itens…</div>'});

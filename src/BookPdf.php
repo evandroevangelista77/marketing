@@ -503,6 +503,7 @@ class BookPdf
         if ($this->d['kind'] === 'annual') {
             $this->yearEvolution();
         }
+        $this->breakdowns();
         $this->okrs();
         $this->projects();
         $this->offenders();
@@ -918,12 +919,12 @@ class BookPdf
             case 'pessoas':
                 $rowsL = [];
                 foreach (array_slice($d['load'], 0, 10, true) as $uid => $n) {
-                    $rowsL[] = ['label' => self::t(getUserName((int) $uid)), 'value' => (float) $n, 'color' => $n > Kpi::OVERLOAD ? self::rgb('#dc2626') : self::rgb('#6366f1'), 'note' => (string) $n];
+                    $rowsL[] = ['label' => self::t(getUserName((int) $uid)), 'value' => (float) $n, 'color' => $n > Settings::capacity((int) $uid) ? self::rgb('#dc2626') : self::rgb('#6366f1'), 'note' => (string) $n];
                 }
                 $this->box($x, $y, $w, 78);
                 $this->txt($x + 3, $y + 2.5, $w - 6, 'Demandas em aberto por responsável', 9, true);
-                $this->hbars($x + 3, $y + 12, $w - 6, 6.2, $rowsL, max(array_merge([Kpi::OVERLOAD + 2], array_values($d['load']))), 34, (float) Kpi::OVERLOAD);
-                $this->txt($x + 3, $y + 72, $w - 6, 'Linha vermelha = limite de sobrecarga (' . Kpi::OVERLOAD . ' demandas)', 6.5, false, self::MUTED);
+                $this->hbars($x + 3, $y + 12, $w - 6, 6.2, $rowsL, max(array_merge([Settings::capacity() + 2], array_values($d['load']))), 34, (float) Settings::capacity());
+                $this->txt($x + 3, $y + 72, $w - 6, 'Linha vermelha = capacidade padrão da equipe (' . Settings::capacity() . ' demandas); cada pessoa pode ter capacidade própria em Configurações', 6.5, false, self::MUTED);
                 $this->lineChart($x, $y + 82, $w, 78, 'Demandas em aberto por pessoa (média)', [['name' => 'Média', 'color' => self::rgb('#f97316'), 'values' => $ser('wip_pessoa')]], $labels, (float) $cat['wip_pessoa']['target']);
                 break;
         }
@@ -998,6 +999,63 @@ class BookPdf
                 $this->txt($x0 + $i * $cw, $y + 1.7, $cw, Kpi::format($cat[$key], $v), 7.5, $st !== 'none', self::rgb(Kpi::STATUS_COLORS[$st]), 'C');
             }
             $y += 7;
+        }
+    }
+
+    private function breakdowns(): void
+    {
+        $d = $this->d;
+        $this->page('Recortes: onde está o volume e o atraso', 'Os indicadores de fluxo e prazo fatiados por pilar, tipo, origem, prioridade, área solicitante e responsável, e o cumprimento de cada SLO.');
+        $p = $this->p;
+        $blocks = array_keys(Kpi::DIMENSIONS);
+        foreach ($blocks as $i => $dk) {
+            $x = 12 + ($i % 2) * 140;
+            $y = 28 + intdiv($i, 2) * 44;
+            $rows = array_slice($d['breakdown'][$dk] ?? [], 0, 5);
+            $this->txt($x, $y, 130, Kpi::DIMENSIONS[$dk], 9.5, true);
+            $y += 6;
+            $p->SetFillColor(...self::NAVY);
+            $p->Rect($x, $y, 133, 5.5, 'F');
+            foreach ([['', 0, 52], ['Entr.', 52, 14], ['Concl.', 66, 14], ['Abertas', 80, 20], ['Atras.', 100, 15], ['No prazo', 115, 18]] as [$h, $ox, $w]) {
+                $this->txt($x + $ox + 1, $y + 1.2, $w - 1, $h, 6.8, true, [255, 255, 255], $ox === 0 ? 'L' : 'C');
+            }
+            $y += 5.5;
+            $max = max(1, ...array_column($rows ?: [['open' => 1]], 'open'));
+            foreach ($rows as $j => $r) {
+                if ($j % 2 === 1) {
+                    $p->SetFillColor(248, 250, 252);
+                    $p->Rect($x, $y, 133, 6, 'F');
+                }
+                $this->txt($x + 1, $y + 1.5, 50, $r['label'], 7.3, true);
+                $this->txt($x + 53, $y + 1.5, 13, (string) $r['created'], 7.3, false, self::NAVY, 'C');
+                $this->txt($x + 67, $y + 1.5, 13, (string) $r['done'], 7.3, false, self::NAVY, 'C');
+                $p->SetFillColor(...self::BLUE);
+                $p->Rect($x + 82, $y + 2, max(0.6, 11 * $r['open'] / $max), 2, 'F');
+                $this->txt($x + 94, $y + 1.5, 6, (string) $r['open'], 7.3, true);
+                $this->txt($x + 101, $y + 1.5, 14, (string) $r['late'], 7.3, $r['late'] > 0, $r['late'] > 0 ? [220, 38, 38] : self::MUTED, 'C');
+                $oc = $r['otd'] === null ? self::MUTED : ($r['otd'] >= 85 ? [22, 163, 74] : ($r['otd'] >= 65 ? [217, 119, 6] : [220, 38, 38]));
+                $this->txt($x + 116, $y + 1.5, 16, $r['otd'] === null ? '—' : (int) $r['otd'] . '%', 7.3, true, $oc, 'C');
+                $y += 6;
+            }
+            if (!$rows) {
+                $this->txt($x + 1, $y + 2, 120, 'Sem demandas no período.', 7.5, false, self::MUTED);
+            }
+        }
+        // SLOs
+        $y = 28 + 3 * 44 + 2;
+        $this->txt(12, $y, 130, 'Cumprimento por SLO', 9.5, true);
+        $slos = array_slice($d['slos'], 0, 4);
+        if (!$slos) {
+            $this->txt(12, $y + 7, 250, 'Nenhum SLO ativo com demandas no período.', 7.5, false, self::MUTED);
+            return;
+        }
+        $x = 12;
+        foreach ($slos as $r) {
+            $c = $r['pct'] === null ? self::MUTED : ($r['pct'] >= 90 ? [22, 163, 74] : ($r['pct'] >= 75 ? [217, 119, 6] : [220, 38, 38]));
+            $this->txt($x, $y + 7, 64, $r['name'], 7.5, true);
+            $this->txt($x, $y + 12, 64, $r['met'] . ' cumpridos · ' . $r['breached'] . ' violados · ' . $r['overdue'] . ' vencidos', 6.8, false, self::MUTED);
+            $this->txt($x + 50, $y + 7, 14, $r['pct'] === null ? '—' : (int) $r['pct'] . '%', 9, true, $c, 'R');
+            $x += 68;
         }
     }
 

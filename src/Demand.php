@@ -332,6 +332,15 @@ class Demand extends Base
         if ($default > 0 && (int) ($this->fields['users_id_assigned'] ?? 0) === 0) {
             $this->assign($default);
         }
+        if (Settings::get('prio_auto', '0') === '1' && !$this->isInternal()) {
+            [$prio] = self::suggestPriority($this->fields);
+            if ($prio !== (int) $this->fields['priority']) {
+                global $DB;
+                $DB->update(self::getTable(), ['priority' => $prio], ['id' => (int) $this->getID()]);
+                $this->fields['priority'] = $prio;
+                $this->addEvent('priority', (string) $this->fields['priority'], (string) $prio, 'Prioridade definida pela regra de priorização');
+            }
+        }
         Automation::fire('created', $this->fields, ['value' => (string) ($this->fields['types_id'] ?? '')]);
     }
 
@@ -339,6 +348,38 @@ class Demand extends Base
      * Atribui a demanda a um usuário: grava, registra o evento, abre o pop-up para quem recebeu
      * e dispara as automações de atribuição. Atribuir a quem já é o responsável não faz nada.
      */
+    /**
+     * Regra de priorização: sugere a prioridade pela proximidade do prazo (dias úteis) e pela situação.
+     * Limites configuráveis (padrão 2/5/15/30 dias úteis → Muito alta/Alta/Média/Baixa/Muito baixa); demanda adiada ou
+     * bloqueada sobe um nível. Sem prazo, mantém Média.
+     *
+     * @return array{0: int, 1: string} [prioridade 1-5, motivo]
+     */
+    public static function suggestPriority(array $row, ?string $today = null): array
+    {
+        $deadline = self::deadline($row);
+        if ($deadline === null) {
+            return [3, 'sem prazo definido: Média'];
+        }
+        $today ??= date('Y-m-d');
+        $days = 0;
+        if ($deadline >= $today) {
+            for ($t = strtotime($today . ' +1 day'); $t <= strtotime($deadline); $t = strtotime('+1 day', $t)) {
+                $days += (int) date('N', $t) < 6 ? 1 : 0;
+            }
+        } else {
+            $days = -1;
+        }
+        $lim = Settings::prioDays();
+        $prio = $days <= $lim[0] ? 1 : ($days <= $lim[1] ? 2 : ($days <= $lim[2] ? 3 : ($days <= $lim[3] ? 4 : 5)));
+        $why = $days < 0 ? 'prazo vencido' : ($days . ' dia(s) útil(eis) até o prazo');
+        if ($prio > 1 && (!empty($row['is_postponed']) || ($row['status'] ?? '') === self::STATUS_BLOCKED)) {
+            $prio--;
+            $why .= '; sobe um nível por ' . (!empty($row['is_postponed']) ? 'já ter sido adiada' : 'estar bloqueada');
+        }
+        return [$prio, $why . ': ' . self::PRIORITIES[$prio]];
+    }
+
     public function assign(int $userId): void
     {
         global $DB;

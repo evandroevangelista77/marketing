@@ -144,7 +144,7 @@ class Kpi
                 'Demandas em aberto do responsável mais carregado ÷ total atribuído × 100.', 'Dependência de uma só pessoa é risco de continuidade.',
                 ['Distribuir demandas do responsável mais carregado.', 'Treinar um substituto para as demandas críticas.'], 'Gerência de Marketing'),
             'sobrecarga' => $k('pessoas', 'Pessoas sobrecarregadas', 'n', 'down', 0, 2,
-                'Pessoas com mais de ' . self::OVERLOAD . ' demandas em aberto.', 'Risco de atraso e esgotamento.',
+                'Pessoas com mais demandas em aberto do que a capacidade definida em Configurações (padrão ' . Settings::capacity() . ').', 'Risco de atraso e esgotamento.',
                 ['Redistribuir a carga imediatamente.', 'Negociar adiamento das demandas de menor prioridade.'], 'Gerência de Marketing'),
             'produtividade' => $k('pessoas', 'Concluídas por responsável', 'n', 'info', null, null,
                 'Concluídas no período ÷ pessoas que concluíram ao menos uma demanda.', 'Referência de produtividade média.', [], 'Gerência de Marketing'),
@@ -523,7 +523,7 @@ class Kpi
         }
         $v['wip_pessoa'] = $perUser ? round(array_sum($perUser) / count($perUser), 1) : null;
         $v['concentracao'] = $perUser ? self::pct(max($perUser), array_sum($perUser)) : null;
-        $v['sobrecarga'] = (float) count(array_filter($perUser, fn ($n) => $n > self::OVERLOAD));
+        $v['sobrecarga'] = (float) count(array_filter($perUser, fn ($n, $u) => $n > Settings::capacity((int) $u), ARRAY_FILTER_USE_BOTH));
         $doers = [];
         foreach ($done as $r) {
             if ((int) $r['users_id_assigned'] > 0) {
@@ -797,7 +797,7 @@ class Kpi
                         'atrasadas_pct', 'atraso_medio' => $late > 0,
                         'adiadas_pct' => $postponed,
                         'reincidentes' => $nRes >= 2,
-                        'sobrecarga' => (int) $r['users_id_assigned'] > 0 && ($perUser[(int) $r['users_id_assigned']] ?? 0) > self::OVERLOAD,
+                        'sobrecarga' => (int) $r['users_id_assigned'] > 0 && ($perUser[(int) $r['users_id_assigned']] ?? 0) > Settings::capacity((int) $r['users_id_assigned']),
                         'dep_bloq' => $dep > 0 && isset($c['rows'][$dep]) && Demand::isOpen($c['rows'][$dep]),
                         'wip_pessoa', 'concentracao' => (int) $r['users_id_assigned'] > 0,
                         default => true,
@@ -917,6 +917,308 @@ class Kpi
                 break;
         }
         return ['kind' => $kind, 'note' => $note, 'rows' => array_slice($rows, 0, $limit), 'total' => count($rows), 'name' => $meta['name'] ?? $key];
+    }
+
+    // ------------------------------------------------------------------ recortes por dimensão
+
+    public const DIMENSIONS = ['pillar' => 'Pilar', 'type' => 'Tipo', 'origin' => 'Origem', 'priority' => 'Prioridade', 'area' => 'Área solicitante', 'assignee' => 'Responsável'];
+
+    /** Valor da dimensão de uma demanda, como chave de texto. */
+    private static function dimKey(string $dim, array $r): string
+    {
+        return match ($dim) {
+            'pillar' => (string) (int) $r['pillars_id'],
+            'type' => (string) (int) $r['types_id'],
+            'origin' => (string) $r['origin'],
+            'priority' => (string) (int) $r['priority'],
+            'area' => trim((string) ($r['area'] ?? '')) ?: '—',
+            'assignee' => (string) (int) $r['users_id_assigned'],
+            default => '',
+        };
+    }
+
+    public static function dimLabel(string $dim, string $key): string
+    {
+        switch ($dim) {
+            case 'pillar':
+                return $key === '0' ? 'Sem pilar' : (Structure::pillars()[(int) $key]['name'] ?? 'Pilar ' . $key);
+            case 'type':
+                return $key === '0' ? 'Sem tipo' : (Type::all()[(int) $key]['name'] ?? 'Tipo ' . $key);
+            case 'origin':
+                return Demand::ORIGINS[$key] ?? $key;
+            case 'priority':
+                return Demand::PRIORITIES[(int) $key] ?? $key;
+            case 'assignee':
+                return $key === '0' ? 'Sem responsável' : getUserName((int) $key);
+            default:
+                return $key === '—' ? 'Não informada' : $key;
+        }
+    }
+
+    /**
+     * Indicadores de uma dimensão (pilar, tipo, origem, prioridade, área ou responsável) no período: recebidas, concluídas, em aberto,
+     * atrasadas, entregas no prazo e tempo médio de conclusão. Do maior backlog para o menor.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function breakdown(string $dim, string $from, string $to): array
+    {
+        if (!isset(self::DIMENSIONS[$dim])) {
+            return [];
+        }
+        $c = self::ctx();
+        $fromT = strtotime($from . ' 00:00:00');
+        $toT = min(strtotime($to . ' 23:59:59'), time());
+        $asDate = date('Y-m-d', $toT);
+        $out = [];
+        $row = function (string $k) use (&$out, $dim) {
+            return $out[$k] ??= ['key' => $k, 'label' => self::dimLabel($dim, $k), 'created' => 0, 'done' => 0, 'open' => 0, 'late' => 0, 'ontime' => 0, 'withdl' => 0, 'lead' => []];
+        };
+        foreach ($c['rows'] as $id => $r) {
+            $k = self::dimKey($dim, $r);
+            $ct = self::ts($r['created']);
+            if ($ct !== null && $ct >= $fromT && $ct <= $toT) {
+                $row($k);
+                $out[$k]['created']++;
+            }
+            if ($r['status'] === Demand::STATUS_DONE) {
+                $dt = self::ts($r['completed_at']) ?? self::ts($r['date_mod']);
+                if ($dt !== null && $dt >= $fromT && $dt <= $toT) {
+                    $row($k);
+                    $out[$k]['done']++;
+                    $out[$k]['lead'][] = self::days($ct ?? $dt, $dt);
+                    $dl = self::deadlineAt($c, $r, $dt);
+                    if ($dl) {
+                        $out[$k]['withdl']++;
+                        $out[$k]['ontime'] += date('Y-m-d', $dt) <= $dl ? 1 : 0;
+                    }
+                }
+            }
+            if (self::openAt($c, $r, $toT)) {
+                $row($k);
+                $out[$k]['open']++;
+                $dl = self::deadlineAt($c, $r, $toT);
+                $out[$k]['late'] += ($dl && $dl < $asDate) ? 1 : 0;
+            }
+        }
+        $list = [];
+        foreach ($out as $k => $r) {
+            if (!($r['created'] || $r['done'] || $r['open'])) {
+                continue;
+            }
+            $r['otd'] = self::pct($r['ontime'], $r['withdl']);
+            $r['leadtime'] = self::avg($r['lead']);
+            $r['late_pct'] = self::pct($r['late'], $r['open']);
+            unset($r['lead']);
+            $list[] = $r;
+        }
+        usort($list, fn ($a, $b) => ($b['open'] <=> $a['open']) ?: ($b['created'] <=> $a['created']));
+        return $list;
+    }
+
+    /** Demandas de um valor da dimensão no período (entraram, concluídas ou em aberto ao fim), para a gaveta. */
+    public static function drillDim(string $dim, string $val, string $from, string $to, int $limit = 200): array
+    {
+        $c = self::ctx();
+        $fromT = strtotime($from . ' 00:00:00');
+        $toT = min(strtotime($to . ' 23:59:59'), time());
+        $asDate = date('Y-m-d', $toT);
+        $rows = [];
+        foreach ($c['rows'] as $id => $r) {
+            if (self::dimKey($dim, $r) !== $val) {
+                continue;
+            }
+            $ct = self::ts($r['created']);
+            $dt = $r['status'] === Demand::STATUS_DONE ? (self::ts($r['completed_at']) ?? self::ts($r['date_mod'])) : null;
+            $isOpen = self::openAt($c, $r, $toT);
+            $entered = $ct !== null && $ct >= $fromT && $ct <= $toT;
+            $finished = $dt !== null && $dt >= $fromT && $dt <= $toT;
+            if (!($isOpen || $entered || $finished)) {
+                continue;
+            }
+            $dl = self::deadlineAt($c, $r, $toT);
+            $late = $isOpen && $dl && $dl < $asDate ? (int) self::days(strtotime($dl), strtotime($asDate)) : 0;
+            $bits = [];
+            $bits[] = $isOpen ? 'em aberto' : ($finished ? 'concluída em ' . date('d/m/Y', $dt) : 'entrou no período');
+            if ($entered) {
+                $bits[] = 'entrou em ' . date('d/m/Y', $ct);
+            }
+            if ($late) {
+                $bits[] = 'atrasada há ' . $late . ' d';
+            }
+            $rows[] = ['id' => (int) $id, 'code' => $r['code'], 'name' => $r['name'], 'status' => $r['status'], 'assignee' => (int) $r['users_id_assigned'], 'deadline' => $dl,
+                'detail' => implode(' · ', $bits), 'bad' => $late > 0, 'weight' => $late * 10 + ($isOpen ? 1 : 0)];
+        }
+        usort($rows, fn ($a, $b) => $b['weight'] <=> $a['weight']);
+        return ['kind' => 'demands', 'note' => 'Demandas que entraram, foram concluídas ou estavam em aberto ao fim do período.', 'rows' => array_slice($rows, 0, $limit), 'total' => count($rows)];
+    }
+
+    /** Cumprimento de cada SLO ativo nas demandas do período. @return array<int, array<string, mixed>> */
+    public static function sloBreakdown(string $from, string $to): array
+    {
+        $c = self::ctx();
+        $fromT = strtotime($from . ' 00:00:00');
+        $toT = min(strtotime($to . ' 23:59:59'), time());
+        $created = [];
+        foreach ($c['rows'] as $id => $r) {
+            $ct = self::ts($r['created']);
+            if ($ct !== null && $ct >= $fromT && $ct <= $toT) {
+                $created[$id] = $r;
+            }
+        }
+        $slos = Slo::all(true);
+        if (!$slos || !$created) {
+            return [];
+        }
+        $out = [];
+        foreach (Slo::evaluateMany($created, date('Y-m-d H:i:s', $toT)) as $per) {
+            foreach ($per as $sid => $res) {
+                $st = $res['state'] ?? '';
+                if (!in_array($st, ['met', 'breached', 'overdue', 'running'], true)) {
+                    continue;
+                }
+                $out[$sid] ??= ['id' => $sid, 'name' => $slos[$sid]['name'] ?? 'SLO', 'met' => 0, 'breached' => 0, 'overdue' => 0, 'running' => 0];
+                $out[$sid][$st]++;
+            }
+        }
+        foreach ($out as &$o) {
+            $o['pct'] = self::pct($o['met'], $o['met'] + $o['breached'] + $o['overdue']);
+        }
+        unset($o);
+        return array_values($out);
+    }
+
+    /**
+     * Capacidade x carga por responsável: demandas em aberto, capacidade definida, ocupação, atrasadas e bloqueadas.
+     *
+     * @return array<int, array<string, mixed>> ordenado da maior ocupação para a menor
+     */
+    public static function capacityTable(?string $asOf = null): array
+    {
+        $c = self::ctx();
+        $toT = strtotime(($asOf ?? date('Y-m-d')) . ' 23:59:59');
+        $asDate = date('Y-m-d', min($toT, time()));
+        $out = [];
+        foreach ($c['rows'] as $r) {
+            $u = (int) $r['users_id_assigned'];
+            if ($u <= 0 || !self::openAt($c, $r, $toT)) {
+                continue;
+            }
+            $o = &$out[$u];
+            $o ??= ['user' => $u, 'open' => 0, 'late' => 0, 'blocked' => 0, 'capacity' => Settings::capacity($u), 'custom' => false];
+            $o['open']++;
+            $dl = self::deadlineAt($c, $r, $toT);
+            $o['late'] += ($dl && $dl < $asDate) ? 1 : 0;
+            $o['blocked'] += in_array($r['status'], [Demand::STATUS_BLOCKED, Demand::STATUS_AT_RISK], true) ? 1 : 0;
+            unset($o);
+        }
+        foreach ($out as &$o) {
+            $o['usage'] = (int) round(100 * $o['open'] / max(1, $o['capacity']));
+            $o['state'] = $o['usage'] > 100 ? 'over' : ($o['usage'] >= 80 ? 'warn' : 'ok');
+        }
+        unset($o);
+        usort($out, fn ($a, $b) => $b['usage'] <=> $a['usage']);
+        return $out;
+    }
+
+    // ------------------------------------------------------------------ plano de recuperação (cria plano e atividades reais)
+
+    public const RECOVERY_PROJECT = 'Recuperação de indicadores';
+
+    /** Projeto que reúne os planos de recuperação (criado na primeira vez). */
+    public static function recoveryProject(int $owner): int
+    {
+        global $DB;
+        $r = $DB->request(['SELECT' => ['id'], 'FROM' => Structure::projectsTable(), 'WHERE' => ['name' => self::RECOVERY_PROJECT], 'LIMIT' => 1])->current();
+        if ($r) {
+            return (int) $r['id'];
+        }
+        return Structure::saveProject(0, ['name' => self::RECOVERY_PROJECT, 'objective' => 'Planos de recuperação dos indicadores e das demandas fora da meta, gerados a partir do KPI\'s.', 'users_id' => $owner, 'status' => 'active', 'start_date' => date('Y-m-d')]);
+    }
+
+    private static function planByName(string $name): int
+    {
+        global $DB;
+        $r = $DB->request(['SELECT' => ['id'], 'FROM' => Structure::plansTable(), 'WHERE' => ['name' => $name], 'LIMIT' => 1])->current();
+        return $r ? (int) $r['id'] : 0;
+    }
+
+    /**
+     * Cria o plano de ação de recuperação de um indicador fora da meta: um plano no projeto "Recuperação de indicadores" com as atividades
+     * (revisão em 5 dias úteis, as ações recomendadas distribuídas até o prazo e a confirmação do retorno à meta), todas com prazo e responsável.
+     * Devolve [id do plano (0 se falhou), mensagem, já existia].
+     *
+     * @param array<string, mixed> $offender item de offenders()
+     * @return array{0: int, 1: string, 2: bool}
+     */
+    public static function createRecoveryPlan(array $offender, string $label, int $assignee): array
+    {
+        $name = mb_substr('Recuperar: ' . $offender['name'] . ' — ' . $label, 0, 160);
+        if ($exists = self::planByName($name)) {
+            return [$exists, 'Já existe um plano de recuperação deste indicador para o período.', true];
+        }
+        $today = date('Y-m-d');
+        $project = self::recoveryProject($assignee);
+        $def = self::catalog()[$offender['key']];
+        $plan = Structure::savePlan(0, [
+            'mkt_projects_id' => $project, 'name' => $name, 'users_id' => $assignee, 'start_date' => $today, 'end_date' => $offender['due_date'],
+            'objective' => $offender['name'] . ': ' . $offender['why'] . ' Realizado ' . self::format($def, (float) $offender['value']) . ', meta ' . self::formatTarget($def) . '.',
+            'criteria' => 'Voltar à meta (' . self::formatTarget($def) . ') até ' . date('d/m/Y', strtotime($offender['due_date'])) . '; meta intermediária ' . self::format($def, (float) $offender['mid_value']) . ' até ' . date('d/m/Y', strtotime($offender['mid_date'])) . '.',
+        ]);
+        if (!$plan) {
+            return [0, 'Não foi possível criar o plano.', false];
+        }
+        $prio = ['critico' => 1, 'alto' => 2, 'medio' => 3][$offender['severity']] ?? 3;
+        $make = fn (string $title, string $due, string $obj) => Demand::createActivity([
+            'name' => mb_substr($title, 0, 250), 'users_id_assigned' => $assignee, 'confirmed_date' => $due, 'start_date' => $today, 'priority' => $prio,
+            'mkt_projects_id' => $project, 'plans_id' => $plan, 'objective' => $obj,
+        ]);
+        $make('Revisão de acompanhamento: ' . $offender['name'], $offender['review_date'], 'Primeira revisão do plano de recuperação (5 dias úteis).');
+        $actions = array_values($offender['actions']);
+        $n = max(1, count($actions));
+        foreach ($actions as $i => $a) {
+            $days = max(1, (int) round($offender['days'] * ($i + 1) / ($n + 1)));
+            $make($a, self::bd($today, $days), 'Ação recomendada para recuperar "' . $offender['name'] . '".');
+        }
+        $make('Confirmar o retorno à meta: ' . $offender['name'], $offender['due_date'], 'Conferir em KPI\'s se o indicador voltou à meta (' . self::formatTarget($def) . ').');
+        return [$plan, 'Plano de recuperação criado com ' . ($n + 2) . ' atividades.', false];
+    }
+
+    /**
+     * Cria um plano de ação com uma atividade por demanda ofensora (prazo = prazo recomendado, responsável = o da demanda ou o informado).
+     *
+     * @param array<int, array<string, mixed>> $demands itens de offenderDemands()
+     * @return array{0: int, 1: string, 2: bool}
+     */
+    public static function createDemandRecoveryPlan(array $demands, string $label, int $assignee): array
+    {
+        $name = mb_substr('Recuperar demandas ofensoras — ' . $label, 0, 160);
+        if ($exists = self::planByName($name)) {
+            return [$exists, 'Já existe um plano de recuperação das demandas ofensoras para o período.', true];
+        }
+        if (!$demands) {
+            return [0, 'Não há demandas ofensoras.', false];
+        }
+        $project = self::recoveryProject($assignee);
+        $end = max(array_column($demands, 'recommended'));
+        $plan = Structure::savePlan(0, [
+            'mkt_projects_id' => $project, 'name' => $name, 'users_id' => $assignee, 'start_date' => date('Y-m-d'), 'end_date' => $end,
+            'objective' => 'Recuperar as demandas que mais pesam nos indicadores (atrasadas, adiadas várias vezes, paradas, antigas ou sem responsável).',
+            'criteria' => 'Cada demanda concluída, replanejada com justificativa ou cancelada até o prazo recomendado.',
+        ]);
+        if (!$plan) {
+            return [0, 'Não foi possível criar o plano.', false];
+        }
+        $made = 0;
+        foreach (array_slice($demands, 0, 30) as $d) {
+            $id = Demand::createActivity([
+                'name' => mb_substr('Recuperar ' . $d['code'] . ' — ' . $d['name'], 0, 250), 'users_id_assigned' => $d['assignee'] ?: $assignee, 'confirmed_date' => $d['recommended'],
+                'start_date' => date('Y-m-d'), 'priority' => max(1, min(3, (int) $d['priority'])), 'mkt_projects_id' => $project, 'plans_id' => $plan,
+                'objective' => implode('; ', $d['reasons']) . '. ' . $d['action'],
+            ]);
+            $made += $id > 0 ? 1 : 0;
+        }
+        return [$plan, 'Plano criado com ' . $made . ' atividades de recuperação.', false];
     }
 
     // ------------------------------------------------------------------ pontuação

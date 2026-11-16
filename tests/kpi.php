@@ -137,6 +137,40 @@ $series = Kpi::series('2026-08', 12);
 $check('H1 série de 12 meses com todos os indicadores', count($series) === 12 && count(reset($series)) === count($cat));
 
 // ---------------------------------------------------------------- OKRs
+// ---------------------------------------------------------------- recortes e plano de recuperação
+foreach (array_keys(Kpi::DIMENSIONS) as $dk) {
+    $bk = Kpi::breakdown($dk, "$base-01", "$base-31");
+    $bad = array_filter($bk, fn ($r) => !isset($r['label'], $r['created'], $r['open'], $r['late']));
+    $check("R1 recorte por $dk responde com linhas válidas", is_array($bk) && !$bad);
+}
+$bkT = Kpi::breakdown('priority', "$base-01", "$base-31");
+$check('R2 recorte: soma de "entraram" bate com o indicador de recebidas', array_sum(array_column($bkT, 'created')) === (int) $v['entradas']);
+$one = $bkT[0] ?? null;
+$check('R3 gaveta do recorte lista as demandas do valor', $one === null || (Kpi::drillDim('priority', $one['key'], "$base-01", "$base-31")['total'] >= max($one['created'], $one['open'])));
+$check('R4 recorte por SLO responde', is_array(Kpi::sloBreakdown("$base-01", "$base-31")));
+$ofKey = (function () { foreach (Kpi::catalog() as $k => $d) { if ($d['dir'] !== 'info' && !empty($d['actions'])) { return $k; } } return null; })();
+$def0 = Kpi::catalog()[$ofKey];
+$fake = ['key' => $ofKey, 'name' => 'KPI-TESTE ' . $def0['name'], 'why' => $def0['why'], 'actions' => $def0['actions'], 'days' => 20, 'severity' => 'critico', 'value' => 10.0, 'mid_value' => 20.0,
+    'review_date' => Kpi::bd(date('Y-m-d'), 5), 'mid_date' => Kpi::bd(date('Y-m-d'), 10), 'due_date' => Kpi::bd(date('Y-m-d'), 20)];
+[$rp, $rm, $rex] = Kpi::createRecoveryPlan($fake, 'TESTE', $me);
+$nAct = $rp ? countElementsInTable(Demand::getTable(), ['plans_id' => $rp]) : 0;
+$check('R5 plano de recuperação cria plano e atividades com prazo', $rp > 0 && !$rex && $nAct === count($def0['actions']) + 2, "$rm / $nAct");
+[$rp2, , $rex2] = Kpi::createRecoveryPlan($fake, 'TESTE', $me);
+$check('R6 não duplica o plano de recuperação', $rp2 === $rp && $rex2 === true);
+$check('R7 atividades do plano têm responsável e prazo', $rp > 0 && countElementsInTable(Demand::getTable(), ['plans_id' => $rp, 'confirmed_date' => null]) === 0);
+$dd = Kpi::offenderDemands(date('Y-m-d'), 30);
+[$rp3, $rm3] = Kpi::createDemandRecoveryPlan($dd, 'TESTE', $me);
+$check('R8 plano das demandas ofensoras', $dd ? $rp3 > 0 : $rp3 === 0, $rm3);
+foreach (array_filter([$rp, $rp3]) as $pl) {
+    $dids = array_map(fn ($r) => (int) $r['id'], iterator_to_array($DB->request(['SELECT' => ['id'], 'FROM' => Demand::getTable(), 'WHERE' => ['plans_id' => $pl]]), false));
+    if ($dids) {
+        foreach ([Demand::getEvidencesTable(), Demand::getEventsTable(), Demand::reschedulesTable(), GlpiPlugin\Marketing\Alert::getTable()] as $t) {
+            $DB->delete($t, ['demands_id' => $dids]);
+        }
+        $DB->delete(Demand::getTable(), ['id' => $dids]);
+    }
+}
+
 $oid = Okr::save(0, ['name' => 'KPI-TESTE objetivo', 'date_from' => '2026-07-01', 'date_to' => '2026-12-31', 'users_id' => $me]);
 $check('R1 objetivo criado; datas inválidas recusadas', $oid > 0 && Okr::save(0, ['name' => 'x', 'date_from' => '2026-12-31', 'date_to' => '2026-01-01']) === 0);
 $k1 = Okr::saveKr($oid, 0, ['name' => 'Entregas no prazo', 'kind' => 'kpi', 'kpi_key' => 'otd', 'start_value' => '50', 'target_value' => '90', 'weight' => 2]);
@@ -203,6 +237,10 @@ if ($ids) {
     $DB->delete(Demand::getTable(), ['id' => $ids]);
 }
 $DB->delete(GlpiPlugin\Marketing\Alert::getTable(), ['event' => 'book']);
+foreach ($DB->request(['SELECT' => ['id'], 'FROM' => GlpiPlugin\Marketing\Structure::plansTable(), 'WHERE' => ['OR' => [['name' => ['LIKE', 'Recuperar:%TESTE'], ], ['name' => ['LIKE', 'Recuperar demandas ofensoras — TESTE']]]]]) as $pr) {
+    $DB->delete(Demand::getTable(), ['plans_id' => (int) $pr['id']]);
+    $DB->delete(GlpiPlugin\Marketing\Structure::plansTable(), ['id' => (int) $pr['id']]);
+}
 $DB->delete(Kpi::snapTable(), ['period' => date('Y-m')]);
 Settings::save(['kpi_targets' => '{}', 'book_recipients' => '', 'book_emails' => '', 'book_monthly' => '1', 'book_annual' => '1', 'book_annual_when' => 'dec31', 'book_last_monthly' => '', 'book_last_annual' => '']);
 $check('L1 limpeza: nada de KPI-TESTE sobrou', countElementsInTable(Demand::getTable(), ['name' => ['LIKE', 'KPI-TESTE%']]) === 0 && countElementsInTable(Okr::table(), ['name' => ['LIKE', 'KPI-TESTE%']]) === 0);

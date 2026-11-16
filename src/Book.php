@@ -222,6 +222,7 @@ class Book
             'vals' => $vals, 'prev' => $prev, 'sum' => $sum, 'series' => $series, 'monthly' => $monthly, 'offenders' => $offenders,
             'offenderDemands' => Kpi::offenderDemands($asof === $today || $to >= date('Y-m-d', strtotime('-6 day')) ? $today : $asof, 25), 'projectRisks' => Kpi::projectRisks($today), 'plans' => $plans, 'okrs' => $okrs,
             'milestones' => $milestones, 'load' => array_slice($load, 0, 12, true), 'byPillar' => $byPillar, 'narrative' => Kpi::narrative($sum, $label),
+            'breakdown' => array_map(fn ($dk) => Kpi::breakdown($dk, $from, $to), array_combine(array_keys(Kpi::DIMENSIONS), array_keys(Kpi::DIMENSIONS))), 'slos' => Kpi::sloBreakdown($from, $to),
             'generated' => date('Y-m-d H:i:s'),
         ];
     }

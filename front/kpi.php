@@ -122,6 +122,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg(Book::send((int) ($p['id'] ?? 0)));
             $go('?tab=books');
             break;
+        case 'recovery_plan':
+            $per2 = (string) ($p['p'] ?? date('Y-m'));
+            $asg = (int) ($p['assignee'] ?? 0) ?: (int) Session::getLoginUserID();
+            $lbl = date('m/Y');
+            if (($p['what'] ?? '') === 'demands') {
+                [$pid, $txt] = Kpi::createDemandRecoveryPlan(Kpi::offenderDemands(date('Y-m-d'), 30), $lbl, $asg);
+            } else {
+                $key = (string) ($p['key'] ?? '');
+                Kpi::resetCache();
+                $vv = Kpi::values(date('Y-m-01'), date('Y-m-d'));
+                $ss = Kpi::summarize($vv);
+                $of = null;
+                foreach (Kpi::offenders($ss['rows'], date('Y-m-d')) as $o) {
+                    if ($o['key'] === $key) {
+                        $of = $o;
+                    }
+                }
+                [$pid, $txt] = $of ? Kpi::createRecoveryPlan($of, $lbl, $asg) : [0, 'Este indicador não está fora da meta no mês atual.'];
+            }
+            $msg($txt . ($pid ? ' Veja em Projetos e planos.' : ''));
+            $go('?tab=ofensores&p=' . urlencode($per2));
+            break;
         case 'book_delete':
             Book::delete((int) ($p['id'] ?? 0));
             $msg('Book removido.');
@@ -132,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ---------------------------------------------------------------- período
-$tab = in_array($_GET['tab'] ?? '', ['visao', 'indicadores', 'okrs', 'ofensores', 'books', 'metas'], true) ? $_GET['tab'] : 'visao';
+$tab = in_array($_GET['tab'] ?? '', ['visao', 'indicadores', 'recortes', 'okrs', 'ofensores', 'books', 'metas'], true) ? $_GET['tab'] : 'visao';
 $per = (string) ($_GET['p'] ?? date('Y-m'));
 if (preg_match('/^Y:(\d{4})$/', $per, $m)) {
     [$from, $to, $label] = Book::yearPeriod((int) $m[1]);
@@ -157,7 +179,7 @@ echo Ui::title("KPI's", 'Indicadores do Marketing, OKRs, planos de recuperação
         : "<input type='hidden' name='kind' value='monthly'><input type='hidden' name='month' value='" . $e($per) . "'>")
     ) . "<button class='btn btn-primary'><i class='ti ti-file-type-pdf me-1'></i>Gerar book executivo (PDF)</button></form>");
 
-$tabs = ['visao' => ['Visão geral', 'ti-layout-dashboard'], 'indicadores' => ['Indicadores', 'ti-list-details'], 'okrs' => ['OKRs', 'ti-target'], 'ofensores' => ['Ofensores e recuperação', 'ti-alert-triangle'], 'books' => ['Books', 'ti-books'], 'metas' => ['Metas', 'ti-adjustments']];
+$tabs = ['visao' => ['Visão geral', 'ti-layout-dashboard'], 'indicadores' => ['Indicadores', 'ti-list-details'], 'recortes' => ['Recortes', 'ti-chart-pie'], 'okrs' => ['OKRs', 'ti-target'], 'ofensores' => ['Ofensores e recuperação', 'ti-alert-triangle'], 'books' => ['Books', 'ti-books'], 'metas' => ['Metas', 'ti-adjustments']];
 echo "<nav class='mkt-viewtabs'>";
 foreach ($tabs as $k => [$l, $ic]) {
     echo "<a class='" . ($tab === $k ? 'on' : '') . "' href='" . $e(Ui::url('/front/kpi.php?tab=' . $k . '&p=' . urlencode($per))) . "'><i class='ti $ic me-1'></i>" . $e($l) . "</a>";
@@ -165,7 +187,7 @@ foreach ($tabs as $k => [$l, $ic]) {
 echo "</nav>";
 
 // seletor de período (abas que o usam)
-$needsPeriod = in_array($tab, ['visao', 'indicadores', 'ofensores'], true);
+$needsPeriod = in_array($tab, ['visao', 'indicadores', 'recortes', 'ofensores'], true);
 if ($needsPeriod) {
     echo "<form method='get' class='card card-body mb-3'><input type='hidden' name='tab' value='" . $e($tab) . "'><div class='mkt-filters'><div><label>Período</label><select class='form-select' name='p' onchange='this.form.submit()'>";
     $opts = ['90d' => 'Últimos 90 dias'];
@@ -409,6 +431,55 @@ if ($tab === 'indicadores') {
         . "document.querySelector('.mkt-ind').addEventListener('click',function(e){var m=e.target.closest('.mkt-ind-main');if(!m)return;var d=m.nextElementSibling;d.hidden=!d.hidden;m.classList.toggle('open',!d.hidden);});})();</script>";
 }
 
+// ================================================================= RECORTES
+if ($tab === 'recortes') {
+    $dimSel = isset(Kpi::DIMENSIONS[$_GET['d'] ?? '']) ? $_GET['d'] : 'pillar';
+    $chart = ['from' => $from, 'to' => $to, 'drill' => Ui::url('/front/kpi_drill.php'), 'labels' => [], 'spark' => [], 'targets' => [], 'series' => [], 'monthly' => [], 'groupsMonthly' => []];
+    echo "<script type='application/json' id='mkt-kpi-data'>" . json_encode($chart, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) . "</script>";
+    echo "<div class='alert alert-info py-2 small'><div>Os mesmos indicadores de fluxo e prazo, <b>fatiados</b> por pilar, tipo, origem, prioridade, área solicitante e responsável. Clique em uma linha para abrir, na lateral, as demandas do recorte.</div></div>";
+    echo "<nav class='mkt-filterchips mb-3'>";
+    foreach (Kpi::DIMENSIONS as $dk => $dl) {
+        echo "<a class='btn btn-sm " . ($dk === $dimSel ? 'btn-primary' : 'btn-outline-secondary') . " me-1' href='" . $e(Ui::url('/front/kpi.php?tab=recortes&p=' . urlencode($per) . '&d=' . $dk)) . "'>" . $e($dl) . "</a>";
+    }
+    echo "</nav>";
+    $bk = Kpi::breakdown($dimSel, $from, $to);
+    $maxOpen = max(1, ...array_column($bk ?: [['open' => 1]], 'open'));
+    echo "<div class='card mb-4'><div class='table-responsive'><table class='table card-table table-sm table-hover'><thead><tr><th>" . $e(Kpi::DIMENSIONS[$dimSel]) . "</th><th class='text-end'>Entraram</th><th class='text-end'>Concluídas</th><th style='width:22%'>Em aberto</th><th class='text-end'>Atrasadas</th><th class='text-end'>No prazo</th><th class='text-end'>Lead time</th></tr></thead><tbody>";
+    foreach ($bk as $r) {
+        $otdC = $r['otd'] === null ? '#94a3b8' : ($r['otd'] >= 85 ? '#16a34a' : ($r['otd'] >= 65 ? '#f59e0b' : '#dc2626'));
+        $lateC = $r['late'] > 0 ? '#dc2626' : '#94a3b8';
+        echo "<tr class='mkt-drill' style='cursor:pointer' data-dim='" . $e($dimSel) . "' data-val='" . $e($r['key']) . "'><td><b>" . $e($r['label']) . "</b></td><td class='text-end'>" . (int) $r['created'] . "</td><td class='text-end'>" . (int) $r['done'] . "</td>"
+            . "<td><div class='d-flex align-items-center gap-2'><div style='flex:1;height:8px;background:rgba(148,163,184,.2);border-radius:4px'><div style='width:" . round(100 * $r['open'] / $maxOpen) . "%;height:8px;border-radius:4px;background:#2563eb'></div></div><b>" . (int) $r['open'] . "</b></div></td>"
+            . "<td class='text-end fw-bold' style='color:$lateC'>" . (int) $r['late'] . ($r['late_pct'] !== null ? " <span class='small'>(" . (int) $r['late_pct'] . "%)</span>" : '') . "</td>"
+            . "<td class='text-end fw-bold' style='color:$otdC'>" . ($r['otd'] === null ? '—' : (int) $r['otd'] . '%') . "</td><td class='text-end'>" . ($r['leadtime'] === null ? '—' : round($r['leadtime'], 1) . ' d') . "</td></tr>";
+    }
+    if (!$bk) {
+        echo "<tr><td colspan='7' class='text-center text-secondary'>Sem demandas no período.</td></tr>";
+    }
+    echo "</tbody></table></div></div>";
+    $cap = Kpi::capacityTable(min($to, date('Y-m-d')));
+    echo "<h3 class='mkt-section-title'>Capacidade x carga por responsável</h3><div class='card mb-4'><div class='table-responsive'><table class='table card-table table-sm'><thead><tr><th>Responsável</th><th class='text-end'>Em aberto</th><th class='text-end'>Capacidade</th><th style='width:30%'>Ocupação</th><th class='text-end'>Atrasadas</th><th class='text-end'>Bloq./em risco</th></tr></thead><tbody>";
+    foreach ($cap as $r) {
+        $c = ['over' => '#dc2626', 'warn' => '#f59e0b', 'ok' => '#16a34a'][$r['state']];
+        echo "<tr><td><b>" . $e(getUserName($r['user'])) . "</b></td><td class='text-end'>" . (int) $r['open'] . "</td><td class='text-end'>" . (int) $r['capacity'] . "</td><td><div class='d-flex align-items-center gap-2'><div style='flex:1;height:8px;background:rgba(148,163,184,.2);border-radius:4px'><div style='width:" . min(100, $r['usage']) . "%;height:8px;border-radius:4px;background:$c'></div></div><b style='color:$c'>" . (int) $r['usage'] . "%</b></div></td><td class='text-end'>" . (int) $r['late'] . "</td><td class='text-end'>" . (int) $r['blocked'] . "</td></tr>";
+    }
+    if (!$cap) {
+        echo "<tr><td colspan='6' class='text-center text-secondary'>Nenhuma demanda em aberto com responsável.</td></tr>";
+    }
+    echo "</tbody></table></div><div class='card-footer small text-secondary'>Ocupação = em aberto ÷ capacidade (padrão e individual definidos em Configurações → Demandas). Verde até 79%, âmbar de 80% a 100%, vermelho acima.</div></div>";
+    $sl = Kpi::sloBreakdown($from, $to);
+    echo "<h3 class='mkt-section-title'>Por SLO</h3><div class='card'><div class='table-responsive'><table class='table card-table table-sm'><thead><tr><th>SLO</th><th class='text-end'>Cumpridos</th><th class='text-end'>Violados</th><th class='text-end'>Vencidos em aberto</th><th class='text-end'>Em andamento</th><th class='text-end'>Cumprimento</th></tr></thead><tbody>";
+    foreach ($sl as $r) {
+        $c = $r['pct'] === null ? '#94a3b8' : ($r['pct'] >= 90 ? '#16a34a' : ($r['pct'] >= 75 ? '#f59e0b' : '#dc2626'));
+        echo "<tr><td><b>" . $e($r['name']) . "</b></td><td class='text-end'>" . (int) $r['met'] . "</td><td class='text-end'>" . (int) $r['breached'] . "</td><td class='text-end'>" . (int) $r['overdue'] . "</td><td class='text-end'>" . (int) $r['running'] . "</td><td class='text-end fw-bold' style='color:$c'>" . ($r['pct'] === null ? '—' : (int) $r['pct'] . '%') . "</td></tr>";
+    }
+    if (!$sl) {
+        echo "<tr><td colspan='6' class='text-center text-secondary'>Nenhum SLO ativo com demandas no período.</td></tr>";
+    }
+    echo "</tbody></table></div></div>";
+    echo Ui::script('kpi.js');
+}
+
 // ================================================================= OKRs
 if ($tab === 'okrs') {
     $okrs = Okr::all();
@@ -480,10 +551,14 @@ if ($tab === 'ofensores') {
             . "<span class='ms-auto'>Realizado <b style='color:$sc'>" . $e(Kpi::format($def, $o['value'])) . "</b> · meta " . $e(Kpi::formatTarget($def)) . "</span></div>"
             . "<div class='row mt-2'><div class='col-md-4 small'><div class='text-secondary text-uppercase' style='font-size:.68rem'>Por que importa</div>" . $e($o['why']) . "</div>"
             . "<div class='col-md-5 small'><div class='text-secondary text-uppercase' style='font-size:.68rem'>Ações recomendadas</div><ol class='mb-0 ps-3'>" . implode('', array_map(fn ($a) => "<li>" . $e($a) . "</li>", $o['actions'])) . "</ol></div>"
-            . "<div class='col-md-3 small'><div class='text-secondary text-uppercase' style='font-size:.68rem'>Responsável e prazos</div><b>" . $e($o['owner']) . "</b><br>Revisão: " . $e(Ui::date($o['review_date'])) . "<br>Intermediário: " . $e(Ui::date($o['mid_date'])) . " (" . $e(Kpi::format($def, $o['mid_value'])) . ")<br><b style='color:$sc'>Prazo final: " . $e(Ui::date($o['due_date'])) . "</b></div></div></div></div>";
+            . "<div class='col-md-3 small'><div class='text-secondary text-uppercase' style='font-size:.68rem'>Responsável e prazos</div><b>" . $e($o['owner']) . "</b><br>Revisão: " . $e(Ui::date($o['review_date'])) . "<br>Intermediário: " . $e(Ui::date($o['mid_date'])) . " (" . $e(Kpi::format($def, $o['mid_value'])) . ")<br><b style='color:$sc'>Prazo final: " . $e(Ui::date($o['due_date'])) . "</b></div></div>"
+            . "<form method='post' action='" . $e(Ui::url('/front/kpi.php')) . "' class='d-flex gap-2 align-items-center mt-2'>" . Ui::csrf() . "<input type='hidden' name='do' value='recovery_plan'><input type='hidden' name='key' value='" . $e($o['key']) . "'><input type='hidden' name='p' value='" . $e($per) . "'>"
+            . "<span class='small text-secondary'>Responsável pelo plano</span>" . Ui::select('assignee', $users, (int) Session::getLoginUserID(), "style='width:auto'") . "<button class='btn btn-sm btn-primary'><i class='ti ti-checklist me-1'></i>Criar plano de recuperação</button></form></div></div>";
     }
     $dem = Kpi::offenderDemands(date('Y-m-d'), 30);
-    echo "<h3 class='mkt-section-title mt-4'>Demandas ofensoras e prazo recomendado</h3><div class='card'><div class='table-responsive'><table class='table card-table table-sm'><thead><tr><th>Demanda</th><th>Responsável</th><th>Prior.</th><th>Prazo atual</th><th>Motivos</th><th>Prazo recomendado</th><th>Ação recomendada</th></tr></thead><tbody>";
+    echo "<div class='d-flex align-items-center mt-4 mb-2'><h3 class='mkt-section-title mb-0'>Demandas ofensoras e prazo recomendado</h3>"
+        . "<form method='post' action='" . $e(Ui::url('/front/kpi.php')) . "' class='ms-auto d-flex gap-2 align-items-center'>" . Ui::csrf() . "<input type='hidden' name='do' value='recovery_plan'><input type='hidden' name='what' value='demands'><input type='hidden' name='p' value='" . $e($per) . "'>"
+        . Ui::select('assignee', $users, (int) Session::getLoginUserID(), "style='width:auto'") . "<button class='btn btn-sm btn-primary'><i class='ti ti-checklist me-1'></i>Criar plano com estas demandas</button></form></div><div class='card'><div class='table-responsive'><table class='table card-table table-sm'><thead><tr><th>Demanda</th><th>Responsável</th><th>Prior.</th><th>Prazo atual</th><th>Motivos</th><th>Prazo recomendado</th><th>Ação recomendada</th></tr></thead><tbody>";
     foreach ($dem as $r) {
         echo "<tr><td><a href='" . $e(Ui::url('/front/demand.php?id=' . $r['id'])) . "'>" . $e($r['code']) . "</a> " . $e($r['name']) . "</td><td class='small'>" . $e($r['assignee'] ? getUserName($r['assignee']) : '—') . "</td><td>" . (int) $r['priority'] . "</td><td class='small'>" . $e(Ui::date($r['deadline'])) . "</td>"
             . "<td class='small text-warning'>" . $e(implode('; ', $r['reasons'])) . "</td><td class='fw-bold'>" . $e(Ui::date($r['recommended'])) . " <span class='text-secondary small'>(" . (int) $r['du'] . " d.u.)</span></td><td class='small'>" . $e($r['action']) . "</td></tr>";

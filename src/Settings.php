@@ -60,6 +60,10 @@ class Settings
             'poll_seconds'       => '20',
             'required_fields'    => json_encode(['objective', 'audience', 'deliverable', 'desired_date']),
             'default_triage_user' => '0',
+            'capacity_default'   => '10',
+            'capacity_users'     => '{}',
+            'prio_auto'          => '0',
+            'prio_days'          => '2,5,15,30',
             'status_colors'      => json_encode(self::STATUS_COLORS),
         ];
         foreach (array_keys(self::EVENTS) as $ev) {
@@ -86,6 +90,23 @@ class Settings
     public static function bool(string $key): bool
     {
         return self::get($key, '0') === '1';
+    }
+
+    /** Capacidade (demandas em aberto simultâneas) de uma pessoa: o valor próprio, ou o padrão da equipe. */
+    public static function capacity(int $userId = 0): int
+    {
+        $own = json_decode((string) self::get('capacity_users', '{}'), true);
+        if ($userId > 0 && is_array($own) && (int) ($own[(string) $userId] ?? 0) > 0) {
+            return (int) $own[(string) $userId];
+        }
+        return max(1, (int) self::get('capacity_default', '10'));
+    }
+
+    /** Limites (dias úteis até o prazo) da regra de priorização: até X dias = Muito alta, Y = Alta, Z = Média, W = Baixa; acima = Muito baixa. */
+    public static function prioDays(): array
+    {
+        $v = array_map('intval', explode(',', (string) self::get('prio_days', '2,5,15,30')));
+        return count($v) === 4 ? $v : [2, 5, 15, 30];
     }
 
     public static function save(array $values): void

@@ -51,6 +51,10 @@ if (str_starts_with($do, 'cfg_') || in_array($do, ['type_save', 'type_toggle', '
         case 'cfg_demands':
             $fields = array_values(array_intersect((array) ($p['required'] ?? []), array_keys(Settings::BRIEFING_FIELDS)));
             Settings::save(['required_fields' => json_encode($fields ?: ['objective', 'audience', 'deliverable', 'desired_date']), 'default_triage_user' => (string) max(0, (int) ($p['default_triage_user'] ?? 0)),
+                'capacity_default' => (string) max(1, min(99, (int) ($p['capacity_default'] ?? 10))),
+                'capacity_users' => json_encode((object) array_filter(array_map(fn ($v) => max(0, min(99, (int) $v)), (array) ($p['capacity_user'] ?? [])))),
+                'prio_auto' => !empty($p['prio_auto']) ? '1' : '0',
+                'prio_days' => (function () use ($p) { $v = array_map(fn ($x) => max(0, min(365, (int) $x)), (array) ($p['prio_days'] ?? [])); sort($v); return count($v) === 4 ? implode(',', $v) : '2,5,15,30'; })(),
                 'manager_users' => implode(',', array_values(array_unique(array_filter(array_map('intval', (array) ($p['managers'] ?? [])))))),
             ]);
             $msg('Configurações das demandas salvas.');

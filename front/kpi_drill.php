@@ -58,6 +58,7 @@ $from = $date($_GET['from'] ?? '', date('Y-m-01'));
 $to = $date($_GET['to'] ?? '', date('Y-m-d'));
 $k = (string) ($_GET['k'] ?? '');
 $g = (string) ($_GET['g'] ?? '');
+$dim = (string) ($_GET['dim'] ?? '');
 
 if ($k !== '' && isset($cat[$k])) {
     Kpi::resetCache();
@@ -70,6 +71,14 @@ if ($k !== '' && isset($cat[$k])) {
         . "<div><div class='small text-secondary'>Meta</div><b>" . $e(Kpi::formatTarget($def)) . "</b></div><div><span class='badge' style='background:$col;color:#fff'>" . $e(Kpi::STATUS_LABELS[$st]) . "</span></div></div>"
         . "<p class='small mb-3'>" . $e($def['formula']) . "</p>" . $list($drill);
     echo json_encode(['ok' => true, 'title' => $def['name'], 'sub' => Ui::date($from) . ' a ' . Ui::date(min($to, date('Y-m-d'))), 'color' => $col, 'icon' => 'ti-target-arrow', 'html' => $html], JSON_UNESCAPED_UNICODE);
+    return;
+}
+
+if ($dim !== '' && isset(Kpi::DIMENSIONS[$dim])) {
+    $val = (string) ($_GET['val'] ?? '');
+    $d = Kpi::drillDim($dim, $val, $from, $to);
+    $html = $list($d);
+    echo json_encode(['ok' => true, 'title' => Kpi::DIMENSIONS[$dim] . ': ' . Kpi::dimLabel($dim, $val), 'sub' => Ui::date($from) . ' a ' . Ui::date(min($to, date('Y-m-d'))), 'color' => '#2563eb', 'icon' => 'ti-chart-bar', 'html' => $html], JSON_UNESCAPED_UNICODE);
     return;
 }
 

@@ -55,6 +55,23 @@ if ($tab === 'demandas') {
     $inner .= "</div><div class='mb-2' style='max-width:340px'><label class='form-label fw-bold'>Responsável padrão da triagem</label>"
         . Ui::select('default_triage_user', $users, Settings::get('default_triage_user', '0'), '', true, 'Ninguém (atribuição manual)')
         . "<div class='text-secondary small mt-1'>Toda demanda nova é atribuída a esta pessoa, que recebe o pop-up.</div></div>";
+    $capU = json_decode((string) Settings::get('capacity_users', '{}'), true) ?: [];
+    $inner .= "<div class='mb-3'><div class='fw-bold mb-1'>Capacidade operacional</div><div class='text-secondary small mb-2'>Quantas demandas em aberto cada pessoa comporta ao mesmo tempo. Acima disso a pessoa aparece como sobrecarregada no painel, nos KPI's e no book.</div>"
+        . "<div class='mb-2' style='max-width:220px'><label class='form-label'>Capacidade padrão da equipe</label><input class='form-control' type='number' min='1' max='99' name='capacity_default' value='" . (int) Settings::capacity() . "'></div>"
+        . "<details><summary class='small'>Capacidade própria por pessoa (opcional; em branco = padrão)</summary><div class='row g-2 mt-1'>";
+    foreach ($users as $uid => $uname) {
+        if ((int) $uid > 0) {
+            $inner .= "<div class='col-md-4'><label class='form-label small'>" . $e($uname) . "</label><input class='form-control form-control-sm' type='number' min='1' max='99' name='capacity_user[" . (int) $uid . "]' value='" . (int) ($capU[(string) $uid] ?? 0 ?: '') . "'></div>";
+        }
+    }
+    $pd = Settings::prioDays();
+    $inner .= "</div></details></div>"
+        . "<div class='mb-3'><div class='fw-bold mb-1'>Regra de priorização</div><div class='text-secondary small mb-2'>A prioridade sugerida vem dos dias úteis até o prazo: até o 1º limite = Muito alta; 2º = Alta; 3º = Média; 4º = Baixa; acima = Muito baixa. Demanda adiada ou bloqueada sobe um nível. A ficha mostra a sugestão; ligada a opção abaixo, as solicitações externas já nascem com ela.</div>"
+        . "<div class='row g-2' style='max-width:520px'>";
+    foreach ($pd as $i => $dv) {
+        $inner .= "<div class='col-3'><label class='form-label small'>" . ['Muito alta até', 'Alta até', 'Média até', 'Baixa até'][$i] . " (d.u.)</label><input class='form-control form-control-sm' type='number' min='0' max='365' name='prio_days[]' value='" . (int) $dv . "'></div>";
+    }
+    $inner .= "</div><label class='form-check mt-2'><input class='form-check-input' type='checkbox' name='prio_auto' value='1'" . (Settings::get('prio_auto', '0') === '1' ? ' checked' : '') . "><span class='form-check-label'>Aplicar a prioridade sugerida às novas solicitações externas</span></label></div>";
     $mgr = Settings::managers();
     $mgrOpts = '';
     foreach ($users as $uid => $uname) {
